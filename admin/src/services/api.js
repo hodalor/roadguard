@@ -1,9 +1,16 @@
-const API_BASE_URL = 'http://127.0.0.1:5001/api';
+const API_BASE_URL =
+  process.env.ADMIN_API_BASE_URL || 'http://127.0.0.1:5001/api';
 
-async function parseResponse(response) {
+async function parseResponse(response, path) {
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error(
+        data?.message ||
+          `API endpoint not found for ${path}. Make sure the latest backend is deployed and the route exists.`
+      );
+    }
     throw new Error(data?.message || `Request failed with status ${response.status}`);
   }
 
@@ -12,7 +19,7 @@ async function parseResponse(response) {
 
 export async function fetchJson(path) {
   const response = await fetch(`${API_BASE_URL}${path}`);
-  return parseResponse(response);
+  return parseResponse(response, path);
 }
 
 export async function postJson(path, payload) {
@@ -22,7 +29,7 @@ export async function postJson(path, payload) {
     body: JSON.stringify(payload),
   });
 
-  return parseResponse(response);
+  return parseResponse(response, path);
 }
 
 export async function patchJson(path, payload) {
@@ -32,5 +39,5 @@ export async function patchJson(path, payload) {
     body: JSON.stringify(payload),
   });
 
-  return parseResponse(response);
+  return parseResponse(response, path);
 }

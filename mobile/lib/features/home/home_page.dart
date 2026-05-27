@@ -103,6 +103,8 @@ class _HomePageState extends State<HomePage> {
   Timer? _refreshTimer;
   Timer? _ringTimer;
   String? _ringingRequestId;
+  OverlayEntry? _toastEntry;
+  Timer? _toastTimer;
 
   @override
   void initState() {
@@ -119,6 +121,8 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _refreshTimer?.cancel();
     _ringTimer?.cancel();
+    _toastTimer?.cancel();
+    _toastEntry?.remove();
     _motoristNameController.dispose();
     _motoristPhoneController.dispose();
     _motoristAddressController.dispose();

@@ -37,7 +37,7 @@ export function useApiCollection(path, fallbackData) {
     return () => {
       isMounted = false;
     };
-  }, [fallbackData, path]);
+  }, [path]);
 
   return { data, error, isLoading };
 }
@@ -77,7 +77,7 @@ export function useApiResource(path, fallbackData) {
     return () => {
       isMounted = false;
     };
-  }, [fallbackData, path]);
+  }, [path]);
 
   return { data, error, isLoading };
 }
