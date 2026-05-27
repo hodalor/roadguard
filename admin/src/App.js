@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 
 import DashboardPage from './pages/DashboardPage';
+import AdminUsersPage from './pages/AdminUsersPage';
 import HazardsPage from './pages/HazardsPage';
 import MotoristsPage from './pages/MotoristsPage';
 import OverviewPage from './pages/OverviewPage';
@@ -17,6 +18,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<DashboardPage />}>
           <Route index element={<OverviewPage />} />
+          <Route path="admin-users" element={<AdminUsersPage />} />
           <Route path="motorists" element={<MotoristsPage />} />
           <Route path="sos" element={<SosRequestsPage />} />
           <Route path="providers" element={<ProvidersPage />} />

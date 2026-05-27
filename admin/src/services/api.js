@@ -1,5 +1,14 @@
-const API_BASE_URL =
-  process.env.ADMIN_API_BASE_URL || 'http://127.0.0.1:5001/api';
+function normalizeApiBaseUrl(value) {
+  const baseUrl = String(value || 'http://127.0.0.1:5001/api').trim().replace(/\/+$/, '');
+
+  if (baseUrl.endsWith('/api')) {
+    return baseUrl;
+  }
+
+  return `${baseUrl}/api`;
+}
+
+const API_BASE_URL = normalizeApiBaseUrl(process.env.ADMIN_API_BASE_URL);
 
 async function parseResponse(response, path) {
   const data = await response.json().catch(() => null);

@@ -1,5 +1,6 @@
 export const navigationItems = [
   { id: 'overview', label: 'Overview', path: '/' },
+  { id: 'admin-users', label: 'Admin Users', path: '/admin-users' },
   { id: 'motorists', label: 'Motorists', path: '/motorists' },
   { id: 'sos', label: 'SOS Requests', path: '/sos' },
   { id: 'providers', label: 'Providers', path: '/providers' },

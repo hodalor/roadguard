@@ -18,6 +18,20 @@ services:
         sync: false
       - key: SESSION_SECRET
         sync: false
+      - key: SUPER_ADMIN_NAME
+        sync: false
+      - key: SUPER_ADMIN_PHONE
+        sync: false
+      - key: SUPER_ADMIN_PIN
+        sync: false
+      - key: SUPER_ADMIN_EMAIL
+        sync: false
+      - key: SUPER_ADMIN_ADDRESS
+        sync: false
+      - key: SUPER_ADMIN_ID_TYPE
+        sync: false
+      - key: SUPER_ADMIN_ID_NUMBER
+        sync: false
       - key: FIREBASE_SERVICE_ACCOUNT_PATH
         sync: false
       - key: FIREBASE_PROJECT_ID

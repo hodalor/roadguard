@@ -70,6 +70,7 @@ class _HomePageState extends State<HomePage> {
   bool _isResettingPin = false;
   bool _isFetchingProviderLocation = false;
   bool _isFetchingRequestLocation = false;
+  bool _showEmergencyComposer = false;
 
   String? _serviceLoadError;
   String? _providerLoadError;
@@ -103,6 +104,7 @@ class _HomePageState extends State<HomePage> {
   Timer? _refreshTimer;
   Timer? _ringTimer;
   String? _ringingRequestId;
+  OverlayEntry? _blockingEntry;
   OverlayEntry? _toastEntry;
   Timer? _toastTimer;
 
@@ -122,6 +124,7 @@ class _HomePageState extends State<HomePage> {
     _refreshTimer?.cancel();
     _ringTimer?.cancel();
     _toastTimer?.cancel();
+    _blockingEntry?.remove();
     _toastEntry?.remove();
     _motoristNameController.dispose();
     _motoristPhoneController.dispose();
@@ -174,6 +177,54 @@ class _HomePageState extends State<HomePage> {
       return 'Signing in...';
     }
     return 'Please wait...';
+  }
+
+  void _syncBlockingOverlay() {
+    final overlay = Overlay.of(context, rootOverlay: true);
+
+    if (!_isBlockingBusy) {
+      _blockingEntry?.remove();
+      _blockingEntry = null;
+      return;
+    }
+
+    if (_blockingEntry == null) {
+      _blockingEntry = OverlayEntry(
+        builder: (overlayContext) {
+          return Positioned.fill(
+            child: Material(
+              color: Colors.black45,
+              child: Center(
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 24),
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(),
+                      const SizedBox(height: 14),
+                      Text(
+                        _blockingBusyMessage,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      );
+      overlay.insert(_blockingEntry!);
+      return;
+    }
+
+    _blockingEntry!.markNeedsBuild();
   }
 
   List<SosRequestRecord> get _activeMyRequests {
@@ -780,6 +831,47 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Future<bool> _completePostSaveSignIn({
+    required String phone,
+    required String pin,
+    required String action,
+  }) async {
+    _loginPhoneController.text = phone;
+    _loginPinController.text = pin;
+    _resetCurrentPinController.text = pin;
+
+    try {
+      final session = await _apiService.login(phoneNumber: phone, pin: pin);
+      if (!mounted) {
+        return false;
+      }
+
+      setState(() {
+        _motoristProfile = session.motorist ?? _motoristProfile;
+        _providerProfile = session.provider ?? _providerProfile;
+        _sessionToken = session.sessionToken;
+        _sessionExpiresAt = session.sessionExpiresAt;
+      });
+
+      await _refreshSignedInData();
+      return true;
+    } catch (error) {
+      await _reportClientError(
+        action: action,
+        error: error,
+        endpoint: '/api/auth/login',
+      );
+
+      if (mounted) {
+        _showMessage(
+          'Account saved, but automatic sign in could not finish. Please log in with the saved phone number and PIN.',
+          isError: true,
+        );
+      }
+      return false;
+    }
+  }
+
   Future<bool> _registerMotorist() async {
     final name = _motoristNameController.text.trim();
     final phone = _motoristPhoneController.text.trim();
@@ -832,20 +924,15 @@ class _HomePageState extends State<HomePage> {
         _requestMapUrl = '';
       });
 
-      _loginPhoneController.text = phone;
-      _loginPinController.text = pin;
-      _resetCurrentPinController.text = pin;
-      final session = await _apiService.login(phoneNumber: phone, pin: pin);
-      if (!mounted) {
-        return false;
-      }
-      setState(() {
-        _sessionToken = session.sessionToken;
-        _sessionExpiresAt = session.sessionExpiresAt;
-      });
       _syncProviderFormFromMotorist();
-      await _refreshSignedInData();
-      _showMessage('Motorist account saved successfully.', isSuccess: true);
+      final signedIn = await _completePostSaveSignIn(
+        phone: phone,
+        pin: pin,
+        action: 'motorist_auto_login',
+      );
+      if (signedIn) {
+        _showMessage('Motorist account saved successfully.', isSuccess: true);
+      }
       return true;
     } catch (error) {
       if (mounted) {
@@ -948,25 +1035,20 @@ class _HomePageState extends State<HomePage> {
         }
       });
 
-      _loginPhoneController.text = phone;
-      _loginPinController.text = pin;
-      _resetCurrentPinController.text = pin;
-      final session = await _apiService.login(phoneNumber: phone, pin: pin);
-      if (!mounted) {
-        return false;
-      }
-      setState(() {
-        _sessionToken = session.sessionToken;
-        _sessionExpiresAt = session.sessionExpiresAt;
-      });
-      await _refreshSignedInData();
-      _goToTab('profile');
-      _showMessage(
-        provider.approvalStatus == 'approved'
-            ? 'Provider profile saved successfully.'
-            : 'Provider profile submitted. Status is pending approval.',
-        isSuccess: true,
+      final signedIn = await _completePostSaveSignIn(
+        phone: phone,
+        pin: pin,
+        action: 'provider_auto_login',
       );
+      _goToTab('profile');
+      if (signedIn) {
+        _showMessage(
+          provider.approvalStatus == 'approved'
+              ? 'Provider profile saved successfully.'
+              : 'Provider profile submitted. Status is pending approval.',
+          isSuccess: true,
+        );
+      }
       return true;
     } catch (error) {
       if (mounted) {
@@ -1043,6 +1125,7 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _selectedDirectProvider = null;
         _requestImages = [];
+        _showEmergencyComposer = false;
       });
 
       await _refreshSignedInData();
@@ -1835,6 +1918,12 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _syncBlockingOverlay();
+      }
+    });
+
     final items = _navigationItems;
     final selectedIndex = _currentIndex >= items.length ? items.length - 1 : _currentIndex;
 
@@ -1850,43 +1939,11 @@ class _HomePageState extends State<HomePage> {
               ]
             : null,
       ),
-      body: Stack(
-        children: [
-          SafeArea(
-            child: IndexedStack(
-              index: selectedIndex,
-              children: items.map((item) => item.child).toList(),
-            ),
-          ),
-          if (_isBlockingBusy)
-            Positioned.fill(
-              child: ColoredBox(
-                color: Colors.black45,
-                child: Center(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const CircularProgressIndicator(),
-                        const SizedBox(height: 14),
-                        Text(
-                          _blockingBusyMessage,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
+      body: SafeArea(
+        child: IndexedStack(
+          index: selectedIndex,
+          children: items.map((item) => item.child).toList(),
+        ),
       ),
       bottomNavigationBar: items.length < 2
           ? null
@@ -1979,175 +2036,48 @@ class _HomePageState extends State<HomePage> {
         ),
         const SizedBox(height: 20),
         _SectionCard(
-          title: 'Create request',
-          subtitle: 'Use current location, exact address, images, and optional direct provider',
+          title: 'Emergency tools',
+          subtitle: 'Choose what you want to do first, then open only the tool you need',
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (_serviceLoadError != null)
-                _InlineNotice(
-                  message: _serviceLoadError!,
-                  color: Colors.red.shade700,
-                  background: const Color(0xFFFFEFEF),
-                ),
-              DropdownButtonFormField<String>(
-                initialValue: _selectedRequesterType,
-                items: requesterOptions,
-                onChanged: (value) {
-                  if (value == null) {
-                    return;
-                  }
-                  setState(() {
-                    _selectedRequesterType = value;
-                  });
-                },
-                decoration: const InputDecoration(labelText: 'Request with'),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: _selectedRequestServiceId,
-                items: _services
-                    .map(
-                      (service) => DropdownMenuItem(
-                        value: service.id,
-                        child: Text(service.name),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) async {
-                  if (value == null) {
-                    return;
-                  }
-                  setState(() {
-                    _selectedRequestServiceId = value;
-                    if (_selectedDirectProvider?.serviceId != value) {
-                      _selectedDirectProvider = null;
-                    }
-                  });
-                  await _loadNearbyProviders();
-                },
-                decoration: const InputDecoration(labelText: 'Service needed'),
-              ),
-              const SizedBox(height: 12),
-              TextButton.icon(
-                onPressed: _isLoadingProviders ? null : () => _loadNearbyProviders(notifyOnError: true),
-                icon: const Icon(Icons.near_me_outlined),
-                label: const Text('Refresh nearby providers'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _requestIssueController,
-                decoration: const InputDecoration(
-                  labelText: 'Problem summary',
-                  hintText: 'Flat tyre, towing, battery issue, car electrician',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _requestLocationController,
-                decoration: const InputDecoration(
-                  labelText: 'Exact location',
-                  hintText: 'Accra, Newtown, Nii Street',
-                ),
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 12,
-                runSpacing: 8,
+              Row(
                 children: [
-                  OutlinedButton.icon(
-                    onPressed: _isFetchingRequestLocation ? null : _fetchRequestLocation,
-                    icon: const Icon(Icons.my_location_outlined),
-                    label: Text(
-                      _isFetchingRequestLocation ? 'Fetching...' : 'Fetch location',
+                  Expanded(
+                    child: _EmergencyTriangleAction(
+                      icon: Icons.sos,
+                      label: 'Roadside SOS',
+                      accentColor: const Color(0xFFFF6A00),
+                      onTap: () {
+                        setState(() {
+                          _showEmergencyComposer = true;
+                        });
+                      },
                     ),
                   ),
-                  if ((_requestMapUrl ?? '').isNotEmpty)
-                    TextButton(
-                      onPressed: () => _openMap(_requestMapUrl!),
-                      child: const Text('Open map'),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _EmergencyTriangleAction(
+                      icon: Icons.warning_amber_outlined,
+                      label: 'Hazards',
+                      accentColor: const Color(0xFFD92D20),
+                      onTap: _openHazardsPage,
                     ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _EmergencyTriangleAction(
+                      icon: Icons.menu_book_outlined,
+                      label: 'Guides',
+                      accentColor: const Color(0xFF2563EB),
+                      onTap: _openEmergencyGuidesPage,
+                    ),
+                  ),
                 ],
               ),
-              if ((_requestMapUrl ?? '').isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  'Google Maps link is attached to this request.',
-                  style: TextStyle(
-                    color: Colors.grey.shade700,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+              if (_showEmergencyComposer) ...[
+                const SizedBox(height: 20),
+                _buildEmergencyRequestComposer(requesterOptions),
               ],
-              const SizedBox(height: 12),
-              TextField(
-                controller: _requestNoteController,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'More details',
-                  hintText: 'Add car details, blocked road note, or direction hint',
-                ),
-              ),
-              const SizedBox(height: 16),
-              _MultiImagePickerCard(
-                title: 'Request images',
-                subtitle: 'Optional photos the provider can review before accepting',
-                buttonLabel: 'Upload request images',
-                imageDataList: _requestImages,
-                onPressed: _pickRequestImages,
-              ),
-              if (_selectedDirectProvider != null) ...[
-                const SizedBox(height: 16),
-                _InlineNotice(
-                  message:
-                      'Direct provider selected: ${_selectedDirectProvider!.businessName}. Their phone rings first for 30 seconds before other providers can step in.',
-                  color: const Color(0xFF0A5C36),
-                  background: const Color(0xFFEAF7EF),
-                  trailing: TextButton(
-                    onPressed: () {
-                      setState(() {
-                        _selectedDirectProvider = null;
-                      });
-                    },
-                    child: const Text('Clear'),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _isSubmittingRequest ? null : _createEmergencyRequest,
-                  icon: const Icon(Icons.sos),
-                  label: Text(
-                    _isSubmittingRequest ? 'Sending...' : 'Send emergency request',
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        _SectionCard(
-          title: 'Safety Tools',
-          subtitle: 'Report hazards and open emergency guides from the mobile app',
-          child: Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: _openHazardsPage,
-                  icon: const Icon(Icons.warning_amber_outlined),
-                  label: const Text('Hazards'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _openEmergencyGuidesPage,
-                  icon: const Icon(Icons.menu_book_outlined),
-                  label: const Text('Guides'),
-                ),
-              ),
             ],
           ),
         ),
@@ -2222,6 +2152,170 @@ class _HomePageState extends State<HomePage> {
                     ),
         ),
       ],
+    );
+  }
+
+  Widget _buildEmergencyRequestComposer(List<DropdownMenuItem<String>> requesterOptions) {
+    return _SectionCard(
+      title: 'Roadside SOS form',
+      subtitle: 'Use current location, exact address, images, and optional direct provider',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: () {
+                setState(() {
+                  _showEmergencyComposer = false;
+                });
+              },
+              icon: const Icon(Icons.close),
+              label: const Text('Hide form'),
+            ),
+          ),
+          if (_serviceLoadError != null)
+            _InlineNotice(
+              message: _serviceLoadError!,
+              color: Colors.red.shade700,
+              background: const Color(0xFFFFEFEF),
+            ),
+          DropdownButtonFormField<String>(
+            initialValue: _selectedRequesterType,
+            items: requesterOptions,
+            onChanged: (value) {
+              if (value == null) {
+                return;
+              }
+              setState(() {
+                _selectedRequesterType = value;
+              });
+            },
+            decoration: const InputDecoration(labelText: 'Request with'),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: _selectedRequestServiceId,
+            items: _services
+                .map(
+                  (service) => DropdownMenuItem(
+                    value: service.id,
+                    child: Text(service.name),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) async {
+              if (value == null) {
+                return;
+              }
+              setState(() {
+                _selectedRequestServiceId = value;
+                if (_selectedDirectProvider?.serviceId != value) {
+                  _selectedDirectProvider = null;
+                }
+              });
+              await _loadNearbyProviders();
+            },
+            decoration: const InputDecoration(labelText: 'Service needed'),
+          ),
+          const SizedBox(height: 12),
+          TextButton.icon(
+            onPressed: _isLoadingProviders ? null : () => _loadNearbyProviders(notifyOnError: true),
+            icon: const Icon(Icons.near_me_outlined),
+            label: const Text('Refresh nearby providers'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _requestIssueController,
+            decoration: const InputDecoration(
+              labelText: 'Problem summary',
+              hintText: 'Flat tyre, towing, battery issue, car electrician',
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _requestLocationController,
+            decoration: const InputDecoration(
+              labelText: 'Exact location',
+              hintText: 'Accra, Newtown, Nii Street',
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _isFetchingRequestLocation ? null : _fetchRequestLocation,
+                icon: const Icon(Icons.my_location_outlined),
+                label: Text(
+                  _isFetchingRequestLocation ? 'Fetching...' : 'Fetch location',
+                ),
+              ),
+              if ((_requestMapUrl ?? '').isNotEmpty)
+                TextButton(
+                  onPressed: () => _openMap(_requestMapUrl!),
+                  child: const Text('Open map'),
+                ),
+            ],
+          ),
+          if ((_requestMapUrl ?? '').isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Google Maps link is attached to this request.',
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          TextField(
+            controller: _requestNoteController,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              labelText: 'More details',
+              hintText: 'Add car details, blocked road note, or direction hint',
+            ),
+          ),
+          const SizedBox(height: 16),
+          _MultiImagePickerCard(
+            title: 'Request images',
+            subtitle: 'Optional photos the provider can review before accepting',
+            buttonLabel: 'Upload request images',
+            imageDataList: _requestImages,
+            onPressed: _pickRequestImages,
+          ),
+          if (_selectedDirectProvider != null) ...[
+            const SizedBox(height: 16),
+            _InlineNotice(
+              message:
+                  'Direct provider selected: ${_selectedDirectProvider!.businessName}. Their phone rings first for 30 seconds before other providers can step in.',
+              color: const Color(0xFF0A5C36),
+              background: const Color(0xFFEAF7EF),
+              trailing: TextButton(
+                onPressed: () {
+                  setState(() {
+                    _selectedDirectProvider = null;
+                  });
+                },
+                child: const Text('Clear'),
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _isSubmittingRequest ? null : _createEmergencyRequest,
+              icon: const Icon(Icons.sos),
+              label: Text(
+                _isSubmittingRequest ? 'Sending...' : 'Send emergency request',
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -3235,6 +3329,64 @@ class _StatusBadge extends StatelessWidget {
       ),
     );
   }
+}
+
+class _EmergencyTriangleAction extends StatelessWidget {
+  const _EmergencyTriangleAction({
+    required this.icon,
+    required this.label,
+    required this.accentColor,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color accentColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: onTap,
+      child: Column(
+        children: [
+          AspectRatio(
+            aspectRatio: 1,
+            child: ClipPath(
+              clipper: _TriangleClipper(),
+              child: Container(
+                color: accentColor.withValues(alpha: 0.14),
+                child: Center(
+                  child: Icon(icon, size: 34, color: accentColor),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TriangleClipper extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    return Path()
+      ..moveTo(size.width / 2, 0)
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
 
 class _EmptyState extends StatelessWidget {
