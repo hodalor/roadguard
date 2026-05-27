@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 
+const { hashPin, isStoredPinFormat } = require('../utils/pinAuth');
+
 const vehicleSchema = new mongoose.Schema(
   {
     make: String,
@@ -42,7 +44,13 @@ const userSchema = new mongoose.Schema(
     pin: {
       type: String,
       trim: true,
-      default: '1234',
+      default: () => hashPin('1234'),
+      validate: {
+        validator(value) {
+          return isStoredPinFormat(value);
+        },
+        message: 'pin must be a valid stored PIN value.',
+      },
     },
     isVerified: { type: Boolean, default: false },
     vehicle: vehicleSchema,

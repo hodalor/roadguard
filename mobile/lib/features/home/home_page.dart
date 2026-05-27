@@ -92,6 +92,8 @@ class _HomePageState extends State<HomePage> {
   MotoristRecord? _motoristProfile;
   ProviderRecord? _providerProfile;
   ProviderRecord? _selectedDirectProvider;
+  String? _sessionToken;
+  String? _sessionExpiresAt;
 
   List<ServiceCatalogRecord> _services = const [];
   List<ProviderRecord> _nearbyProviders = const [];
@@ -150,6 +152,25 @@ class _HomePageState extends State<HomePage> {
       _motoristProfile?.phoneNumber.isNotEmpty == true
           ? _motoristProfile?.phoneNumber
           : _providerProfile?.phoneNumber;
+
+  bool get _isBlockingBusy =>
+      _isAuthenticating || _isSavingMotorist || _isSavingProvider || _isResettingPin;
+
+  String get _blockingBusyMessage {
+    if (_isSavingProvider) {
+      return 'Saving provider profile...';
+    }
+    if (_isSavingMotorist) {
+      return 'Saving motorist profile...';
+    }
+    if (_isResettingPin) {
+      return 'Updating PIN...';
+    }
+    if (_isAuthenticating) {
+      return 'Signing in...';
+    }
+    return 'Please wait...';
+  }
 
   List<SosRequestRecord> get _activeMyRequests {
     return _myRequests
@@ -314,12 +335,19 @@ class _HomePageState extends State<HomePage> {
         return;
       }
 
+      final friendlyMessage = _friendlyErrorMessage('load_services', error);
+      await _reportClientError(
+        action: 'load_services',
+        error: error,
+        endpoint: '/api/settings/service-catalog',
+      );
+
       setState(() {
-        _serviceLoadError = _formatError(error);
+        _serviceLoadError = friendlyMessage;
       });
 
       if (notifyOnError && _serviceLoadError != null) {
-        _showMessage(_serviceLoadError!);
+        _showMessage(_serviceLoadError!, isError: true);
       }
     } finally {
       if (mounted) {
@@ -377,12 +405,19 @@ class _HomePageState extends State<HomePage> {
         return;
       }
 
+      final friendlyMessage = _friendlyErrorMessage('load_requests', error);
+      await _reportClientError(
+        action: 'load_requests',
+        error: error,
+        endpoint: '/api/sos/mvp',
+      );
+
       setState(() {
-        _requestLoadError = _formatError(error);
+        _requestLoadError = friendlyMessage;
       });
 
       if (notifyOnError && _requestLoadError != null) {
-        _showMessage(_requestLoadError!);
+        _showMessage(_requestLoadError!, isError: true);
       }
     } finally {
       if (mounted) {
@@ -434,12 +469,19 @@ class _HomePageState extends State<HomePage> {
         return;
       }
 
+      final friendlyMessage = _friendlyErrorMessage('load_providers', error);
+      await _reportClientError(
+        action: 'load_providers',
+        error: error,
+        endpoint: '/api/providers/mvp',
+      );
+
       setState(() {
-        _providerLoadError = _formatError(error);
+        _providerLoadError = friendlyMessage;
       });
 
       if (notifyOnError && _providerLoadError != null) {
-        _showMessage(_providerLoadError!);
+        _showMessage(_providerLoadError!, isError: true);
       }
     } finally {
       if (mounted) {
@@ -494,6 +536,8 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _motoristProfile = session.motorist;
         _providerProfile = session.provider;
+        _sessionToken = session.sessionToken;
+        _sessionExpiresAt = session.sessionExpiresAt;
         _selectedRequesterType = session.provider != null && session.motorist == null
             ? 'provider'
             : 'motorist';
@@ -507,10 +551,15 @@ class _HomePageState extends State<HomePage> {
 
       _syncProviderFormFromMotorist();
       await _refreshSignedInData();
-      _showMessage('Login successful.');
+      _showMessage('Login successful.', isSuccess: true);
     } catch (error) {
       if (mounted) {
-        _showMessage(_formatError(error));
+        await _reportClientError(
+          action: 'login',
+          error: error,
+          endpoint: '/api/auth/login',
+        );
+        _showMessage(_friendlyErrorMessage('login', error), isError: true);
       }
     } finally {
       if (mounted) {
@@ -560,16 +609,23 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _motoristProfile = session.motorist ?? _motoristProfile;
         _providerProfile = session.provider ?? _providerProfile;
+        _sessionToken = session.sessionToken;
+        _sessionExpiresAt = session.sessionExpiresAt;
       });
 
       _loginPinController.text = newPin;
       _resetCurrentPinController.text = newPin;
       _resetNewPinController.clear();
       _resetConfirmPinController.clear();
-      _showMessage('PIN reset successfully.');
+      _showMessage('PIN reset successfully.', isSuccess: true);
     } catch (error) {
       if (mounted) {
-        _showMessage(_formatError(error));
+        await _reportClientError(
+          action: 'reset_pin',
+          error: error,
+          endpoint: '/api/auth/reset-pin',
+        );
+        _showMessage(_friendlyErrorMessage('reset_pin', error), isError: true);
       }
     } finally {
       if (mounted) {
@@ -731,15 +787,29 @@ class _HomePageState extends State<HomePage> {
       _loginPhoneController.text = phone;
       _loginPinController.text = pin;
       _resetCurrentPinController.text = pin;
+      final session = await _apiService.login(phoneNumber: phone, pin: pin);
+      if (!mounted) {
+        return false;
+      }
+      setState(() {
+        _sessionToken = session.sessionToken;
+        _sessionExpiresAt = session.sessionExpiresAt;
+      });
       _syncProviderFormFromMotorist();
       await _refreshSignedInData();
-      _showMessage('Motorist account saved successfully.');
+      _showMessage('Motorist account saved successfully.', isSuccess: true);
       return true;
     } catch (error) {
       if (mounted) {
-        _showMessage(
-          '${_formatError(error)} Current API: ${_apiService.currentBaseUrl}',
+        await _reportClientError(
+          action: 'save_motorist',
+          error: error,
+          endpoint: '/api/motorists',
+          metadata: {
+            'baseUrl': _apiService.currentBaseUrl,
+          },
         );
+        _showMessage(_friendlyErrorMessage('save_motorist', error), isError: true);
       }
       return false;
     } finally {
@@ -833,17 +903,31 @@ class _HomePageState extends State<HomePage> {
       _loginPhoneController.text = phone;
       _loginPinController.text = pin;
       _resetCurrentPinController.text = pin;
+      final session = await _apiService.login(phoneNumber: phone, pin: pin);
+      if (!mounted) {
+        return false;
+      }
+      setState(() {
+        _sessionToken = session.sessionToken;
+        _sessionExpiresAt = session.sessionExpiresAt;
+      });
       await _refreshSignedInData();
       _goToTab('profile');
       _showMessage(
         provider.approvalStatus == 'approved'
             ? 'Provider profile saved successfully.'
             : 'Provider profile submitted. Status is pending approval.',
+        isSuccess: true,
       );
       return true;
     } catch (error) {
       if (mounted) {
-        _showMessage(_formatError(error));
+        await _reportClientError(
+          action: 'save_provider',
+          error: error,
+          endpoint: '/api/providers/register',
+        );
+        _showMessage(_friendlyErrorMessage('save_provider', error), isError: true);
       }
       return false;
     } finally {
@@ -1425,6 +1509,53 @@ class _HomePageState extends State<HomePage> {
     return error.toString().replaceFirst('Exception: ', '').trim();
   }
 
+  String _friendlyErrorMessage(String action, Object error) {
+    final raw = _formatError(error).toLowerCase();
+    if (raw.contains('socketconnection timed out') ||
+        raw.contains('timed out') ||
+        raw.contains('failed host lookup') ||
+        raw.contains('connection refused') ||
+        raw.contains('clientexception')) {
+      return 'Unable to connect to the RoadGuide server right now. Please check the backend connection and try again.';
+    }
+
+    switch (action) {
+      case 'login':
+        return 'Login failed. Check your phone number and PIN, then try again.';
+      case 'reset_pin':
+        return 'Could not reset your PIN right now. Please try again.';
+      case 'save_motorist':
+        return 'Could not save the motorist profile right now. Please try again.';
+      case 'save_provider':
+        return 'Could not save the provider profile right now. Please try again.';
+      case 'load_services':
+        return 'Unable to load provider services right now.';
+      case 'load_requests':
+        return 'Unable to load request updates right now.';
+      case 'load_providers':
+        return 'Unable to load providers right now.';
+      default:
+        return 'Something went wrong. Please try again.';
+    }
+  }
+
+  Future<void> _reportClientError({
+    required String action,
+    required Object error,
+    String? endpoint,
+    Map<String, dynamic>? metadata,
+  }) async {
+    await _apiService.logClientError(
+      source: 'mobile',
+      action: action,
+      message: _friendlyErrorMessage(action, error),
+      detail: _formatError(error),
+      phoneNumber: _activePhoneNumber ?? _loginPhoneController.text.trim(),
+      endpoint: endpoint,
+      metadata: metadata,
+    );
+  }
+
   String _statusLabel(String value) {
     switch (value) {
       case 'awaiting_provider':
@@ -1449,6 +1580,24 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _logout() async {
+    final phoneNumber = _activePhoneNumber;
+    final sessionToken = _sessionToken;
+
+    if (phoneNumber != null && sessionToken != null && sessionToken.isNotEmpty) {
+      try {
+        await _apiService.logout(
+          sessionToken: sessionToken,
+          phoneNumber: phoneNumber,
+        );
+      } catch (error) {
+        await _reportClientError(
+          action: 'logout',
+          error: error,
+          endpoint: '/api/auth/logout',
+        );
+      }
+    }
+
     setState(() {
       _currentIndex = 0;
       _selectedRequesterType = 'motorist';
@@ -1458,6 +1607,8 @@ class _HomePageState extends State<HomePage> {
       _ringingRequestId = null;
       _motoristProfile = null;
       _providerProfile = null;
+      _sessionToken = null;
+      _sessionExpiresAt = null;
       _nearbyProviders = const [];
       _myRequests = const [];
       _providerQueue = const [];
@@ -1500,7 +1651,7 @@ class _HomePageState extends State<HomePage> {
     _motoristProfileImageData = null;
     _providerProfileImageData = null;
 
-    _showMessage('Logged out successfully.');
+    _showMessage('Logged out successfully.', isSuccess: true);
   }
 
   String _formatTimestamp(String value) {
@@ -1529,8 +1680,24 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  void _showMessage(
+    String message, {
+    bool isError = false,
+    bool isSuccess = false,
+  }) {
+    final backgroundColor = isError
+        ? const Color(0xFFB42318)
+        : isSuccess
+            ? const Color(0xFF0A6C3B)
+            : const Color(0xFF1F2937);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: backgroundColor,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   Future<void> _openHazardsPage() async {
@@ -1569,11 +1736,43 @@ class _HomePageState extends State<HomePage> {
               ]
             : null,
       ),
-      body: SafeArea(
-        child: IndexedStack(
-          index: selectedIndex,
-          children: items.map((item) => item.child).toList(),
-        ),
+      body: Stack(
+        children: [
+          SafeArea(
+            child: IndexedStack(
+              index: selectedIndex,
+              children: items.map((item) => item.child).toList(),
+            ),
+          ),
+          if (_isBlockingBusy)
+            Positioned.fill(
+              child: ColoredBox(
+                color: Colors.black45,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 14),
+                        Text(
+                          _blockingBusyMessage,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
       bottomNavigationBar: items.length < 2
           ? null
@@ -2112,6 +2311,11 @@ class _HomePageState extends State<HomePage> {
                   label: 'ID',
                   value: '${_motoristProfile!.idType} • ${_motoristProfile!.idNumber}',
                 ),
+                if ((_sessionExpiresAt ?? '').isNotEmpty)
+                  _SummaryRow(
+                    label: 'Session',
+                    value: 'Active until ${_formatTimestamp(_sessionExpiresAt!)}',
+                  ),
               ],
             ),
           ),

@@ -9,6 +9,7 @@ import ProvidersPage from './pages/ProvidersPage';
 import ContentLibraryPage from './pages/ContentLibraryPage';
 import SettingsPage from './pages/SettingsPage';
 import SosRequestsPage from './pages/SosRequestsPage';
+import AuditLogsPage from './pages/AuditLogsPage';
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="hazards" element={<HazardsPage />} />
           <Route path="guides" element={<ContentLibraryPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="audit-logs" element={<AuditLogsPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

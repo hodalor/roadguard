@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -9,28 +10,44 @@ class MvpApiService {
   MvpApiService({http.Client? client}) : _client = client ?? http.Client();
 
   final http.Client _client;
+  String? _resolvedBaseUrl;
 
-  String get currentBaseUrl => _baseUrl;
+  String get currentBaseUrl => _resolvedBaseUrl ?? _baseUrls.first;
 
-  String get _baseUrl {
+  List<String> get _baseUrls {
+    final urls = <String>[];
     final configuredUrl = MobileEnv.apiBaseUrl?.trim();
     if (configuredUrl != null && configuredUrl.isNotEmpty) {
-      return configuredUrl;
+      urls.add(configuredUrl);
     }
 
     if (kIsWeb) {
-      return 'http://localhost:5001/api';
+      urls.add('http://localhost:5001/api');
+      return urls.toSet().toList();
     }
 
     if (defaultTargetPlatform == TargetPlatform.android) {
-      return 'http://10.0.2.2:5001/api';
+      urls.addAll([
+        'http://10.0.2.2:5001/api',
+        'http://127.0.0.1:5001/api',
+        'http://localhost:5001/api',
+      ]);
+    } else {
+      urls.addAll([
+        'http://127.0.0.1:5001/api',
+        'http://localhost:5001/api',
+      ]);
     }
 
-    return 'http://localhost:5001/api';
+    return urls.toSet().toList();
   }
 
-  Uri _buildUri(String path, [Map<String, String?>? queryParameters]) {
-    final normalizedBase = _baseUrl.endsWith('/') ? _baseUrl : '$_baseUrl/';
+  Uri _buildUriForBase(
+    String baseUrl,
+    String path, [
+    Map<String, String?>? queryParameters,
+  ]) {
+    final normalizedBase = baseUrl.endsWith('/') ? baseUrl : '$baseUrl/';
     final normalizedPath = path.startsWith('/') ? path.substring(1) : path;
 
     final filteredQuery = <String, String>{};
@@ -47,8 +64,45 @@ class MvpApiService {
         .replace(queryParameters: filteredQuery.isEmpty ? null : filteredQuery);
   }
 
+  bool _shouldRetryOnConnectionError(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('socketexception') ||
+        message.contains('clientexception') ||
+        message.contains('timed out') ||
+        message.contains('connection refused') ||
+        message.contains('failed host lookup');
+  }
+
+  Future<http.Response> _requestWithFallback({
+    required String path,
+    Map<String, String?>? queryParameters,
+    required Future<http.Response> Function(Uri uri) send,
+  }) async {
+    Object? lastError;
+
+    for (final baseUrl in _baseUrls) {
+      final uri = _buildUriForBase(baseUrl, path, queryParameters);
+
+      try {
+        final response = await send(uri).timeout(const Duration(seconds: 15));
+        _resolvedBaseUrl = baseUrl;
+        return response;
+      } catch (error) {
+        lastError = error;
+        if (!_shouldRetryOnConnectionError(error) || baseUrl == _baseUrls.last) {
+          break;
+        }
+      }
+    }
+
+    throw lastError ?? Exception('Unable to reach the RoadGuide API.');
+  }
+
   Future<List<ServiceCatalogRecord>> fetchServices() async {
-    final response = await _client.get(_buildUri('/settings/service-catalog'));
+    final response = await _requestWithFallback(
+      path: '/settings/service-catalog',
+      send: (uri) => _client.get(uri),
+    );
     final json = _parseJson(response);
 
     if (json is! List) {
@@ -63,7 +117,10 @@ class MvpApiService {
   }
 
   Future<List<MotoristRecord>> fetchMotorists() async {
-    final response = await _client.get(_buildUri('/motorists'));
+    final response = await _requestWithFallback(
+      path: '/motorists',
+      send: (uri) => _client.get(uri),
+    );
     final json = _parseJson(response);
 
     if (json is! List) {
@@ -77,10 +134,12 @@ class MvpApiService {
   }
 
   Future<List<ProviderRecord>> fetchProviders({String? serviceId}) async {
-    final response = await _client.get(
-      _buildUri('/providers/mvp', {
+    final response = await _requestWithFallback(
+      path: '/providers/mvp',
+      queryParameters: {
         'serviceId': serviceId,
-      }),
+      },
+      send: (uri) => _client.get(uri),
     );
     final json = _parseJson(response);
 
@@ -100,13 +159,15 @@ class MvpApiService {
     String? serviceId,
     String? excludeProviderId,
   }) async {
-    final response = await _client.get(
-      _buildUri('/providers/nearby', {
+    final response = await _requestWithFallback(
+      path: '/providers/nearby',
+      queryParameters: {
         'latitude': latitude.toString(),
         'longitude': longitude.toString(),
         'serviceId': serviceId,
         'excludeProviderId': excludeProviderId,
-      }),
+      },
+      send: (uri) => _client.get(uri),
     );
     final json = _parseJson(response);
 
@@ -121,7 +182,10 @@ class MvpApiService {
   }
 
   Future<List<HazardRecord>> fetchHazards() async {
-    final response = await _client.get(_buildUri('/hazards'));
+    final response = await _requestWithFallback(
+      path: '/hazards',
+      send: (uri) => _client.get(uri),
+    );
     final json = _parseJson(response);
 
     if (json is! List) {
@@ -135,10 +199,13 @@ class MvpApiService {
   }
 
   Future<HazardRecord> reportHazard(HazardPayload payload) async {
-    final response = await _client.post(
-      _buildUri('/hazards'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(payload.toJson()),
+    final response = await _requestWithFallback(
+      path: '/hazards',
+      send: (uri) => _client.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(payload.toJson()),
+      ),
     );
 
     final json = _parseJsonMap(response);
@@ -146,7 +213,10 @@ class MvpApiService {
   }
 
   Future<List<EmergencyGuideRecord>> fetchEmergencyGuides() async {
-    final response = await _client.get(_buildUri('/content'));
+    final response = await _requestWithFallback(
+      path: '/content',
+      send: (uri) => _client.get(uri),
+    );
     final json = _parseJson(response);
 
     if (json is! List) {
@@ -163,13 +233,16 @@ class MvpApiService {
     required String phoneNumber,
     required String pin,
   }) async {
-    final response = await _client.post(
-      _buildUri('/auth/login'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'phoneNumber': phoneNumber,
-        'pin': pin,
-      }),
+    final response = await _requestWithFallback(
+      path: '/auth/login',
+      send: (uri) => _client.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'phoneNumber': phoneNumber,
+          'pin': pin,
+        }),
+      ),
     );
 
     final json = _parseJsonMap(response);
@@ -181,14 +254,17 @@ class MvpApiService {
     required String currentPin,
     required String newPin,
   }) async {
-    final response = await _client.patch(
-      _buildUri('/auth/reset-pin'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'phoneNumber': phoneNumber,
-        'currentPin': currentPin,
-        'newPin': newPin,
-      }),
+    final response = await _requestWithFallback(
+      path: '/auth/reset-pin',
+      send: (uri) => _client.patch(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'phoneNumber': phoneNumber,
+          'currentPin': currentPin,
+          'newPin': newPin,
+        }),
+      ),
     );
 
     final json = _parseJsonMap(response);
@@ -196,10 +272,13 @@ class MvpApiService {
   }
 
   Future<MotoristRecord> saveMotorist(MotoristPayload payload) async {
-    final response = await _client.post(
-      _buildUri('/motorists'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(payload.toJson()),
+    final response = await _requestWithFallback(
+      path: '/motorists',
+      send: (uri) => _client.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(payload.toJson()),
+      ),
     );
 
     final json = _parseJsonMap(response);
@@ -207,10 +286,13 @@ class MvpApiService {
   }
 
   Future<ProviderRecord> registerProvider(ProviderPayload payload) async {
-    final response = await _client.post(
-      _buildUri('/providers/register'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(payload.toJson()),
+    final response = await _requestWithFallback(
+      path: '/providers/register',
+      send: (uri) => _client.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(payload.toJson()),
+      ),
     );
 
     final json = _parseJsonMap(response);
@@ -221,12 +303,15 @@ class MvpApiService {
     required String providerId,
     required bool isAvailable,
   }) async {
-    final response = await _client.patch(
-      _buildUri('/providers/$providerId/availability'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'availabilityStatus': isAvailable ? 'available' : 'offline',
-      }),
+    final response = await _requestWithFallback(
+      path: '/providers/$providerId/availability',
+      send: (uri) => _client.patch(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'availabilityStatus': isAvailable ? 'available' : 'offline',
+        }),
+      ),
     );
 
     final json = _parseJsonMap(response);
@@ -248,26 +333,29 @@ class MvpApiService {
     double? latitude,
     double? longitude,
   }) async {
-    final response = await _client.post(
-      _buildUri('/sos'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'requesterType': requesterType,
-        'userId': userId,
-        'providerId': providerId,
-        'emergencyType': emergencyType,
-        'serviceId': serviceId,
-        'requiredServiceName': requiredServiceName,
-        'locationLabel': locationLabel,
-        'locationMapUrl': locationMapUrl,
-        'directProviderId': directProviderId,
-        'requestImages': requestImages ?? const <String>[],
-        'location': {
-          'latitude': latitude,
-          'longitude': longitude,
-        },
-        'note': note,
-      }),
+    final response = await _requestWithFallback(
+      path: '/sos',
+      send: (uri) => _client.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'requesterType': requesterType,
+          'userId': userId,
+          'providerId': providerId,
+          'emergencyType': emergencyType,
+          'serviceId': serviceId,
+          'requiredServiceName': requiredServiceName,
+          'locationLabel': locationLabel,
+          'locationMapUrl': locationMapUrl,
+          'directProviderId': directProviderId,
+          'requestImages': requestImages ?? const <String>[],
+          'location': {
+            'latitude': latitude,
+            'longitude': longitude,
+          },
+          'note': note,
+        }),
+      ),
     );
 
     final json = _parseJsonMap(response);
@@ -281,14 +369,16 @@ class MvpApiService {
     String? status,
     String? viewerProviderId,
   }) async {
-    final response = await _client.get(
-      _buildUri('/sos/mvp', {
+    final response = await _requestWithFallback(
+      path: '/sos/mvp',
+      queryParameters: {
         'userId': userId,
         'providerId': providerId,
         'serviceId': serviceId,
         'status': status,
         'viewerProviderId': viewerProviderId,
-      }),
+      },
+      send: (uri) => _client.get(uri),
     );
 
     final json = _parseJson(response);
@@ -307,13 +397,16 @@ class MvpApiService {
     required String providerId,
     required bool accepted,
   }) async {
-    final response = await _client.patch(
-      _buildUri('/sos/$requestId/provider-response'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'providerId': providerId,
-        'decision': accepted ? 'accept' : 'reject',
-      }),
+    final response = await _requestWithFallback(
+      path: '/sos/$requestId/provider-response',
+      send: (uri) => _client.patch(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'providerId': providerId,
+          'decision': accepted ? 'accept' : 'reject',
+        }),
+      ),
     );
 
     final json = _parseJsonMap(response);
@@ -325,13 +418,16 @@ class MvpApiService {
     String? userId,
     String? providerId,
   }) async {
-    final response = await _client.patch(
-      _buildUri('/sos/$requestId/cancel'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'userId': userId,
-        'providerId': providerId,
-      }),
+    final response = await _requestWithFallback(
+      path: '/sos/$requestId/cancel',
+      send: (uri) => _client.patch(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'userId': userId,
+          'providerId': providerId,
+        }),
+      ),
     );
 
     final json = _parseJsonMap(response);
@@ -343,13 +439,16 @@ class MvpApiService {
     required String userId,
     required String providerId,
   }) async {
-    final response = await _client.patch(
-      _buildUri('/sos/$requestId/transfer'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'userId': userId,
-        'providerId': providerId,
-      }),
+    final response = await _requestWithFallback(
+      path: '/sos/$requestId/transfer',
+      send: (uri) => _client.patch(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'userId': userId,
+          'providerId': providerId,
+        }),
+      ),
     );
 
     final json = _parseJsonMap(response);
@@ -361,17 +460,68 @@ class MvpApiService {
     required String providerId,
     String? message,
   }) async {
-    final response = await _client.post(
-      _buildUri('/sos/$requestId/offers'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'providerId': providerId,
-        'message': message,
-      }),
+    final response = await _requestWithFallback(
+      path: '/sos/$requestId/offers',
+      send: (uri) => _client.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'providerId': providerId,
+          'message': message,
+        }),
+      ),
     );
 
     final json = _parseJsonMap(response);
     return SosRequestRecord.fromJson(_extractData(json));
+  }
+
+  Future<void> logout({
+    required String sessionToken,
+    required String phoneNumber,
+  }) async {
+    await _requestWithFallback(
+      path: '/auth/logout',
+      send: (uri) => _client.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'sessionToken': sessionToken,
+          'phoneNumber': phoneNumber,
+        }),
+      ),
+    );
+  }
+
+  Future<void> logClientError({
+    required String source,
+    required String action,
+    required String message,
+    String? detail,
+    String? phoneNumber,
+    String? endpoint,
+    Map<String, dynamic>? metadata,
+  }) async {
+    try {
+      await _requestWithFallback(
+        path: '/audit-logs/client-error',
+        send: (uri) => _client.post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'source': source,
+            'action': action,
+            'message': message,
+            'detail': detail,
+            'phoneNumber': phoneNumber,
+            'endpoint': endpoint,
+            'metadata': metadata,
+          }),
+        ),
+      );
+    } catch (_) {
+      // Best-effort logging only.
+    }
   }
 
   dynamic _parseJson(http.Response response) {
@@ -379,7 +529,7 @@ class MvpApiService {
     if (body.startsWith('<!DOCTYPE html') ||
         body.startsWith('<html') ||
         response.headers['content-type']?.contains('text/html') == true) {
-      final requestedUrl = response.request?.url.toString() ?? _baseUrl;
+      final requestedUrl = response.request?.url.toString() ?? currentBaseUrl;
       throw Exception(
         'The app reached an HTML page instead of the RoadGuide API at $requestedUrl. Check API_BASE_URL and make sure the backend is running on port 5001.',
       );
@@ -561,11 +711,15 @@ class AuthSessionRecord {
     required this.phoneNumber,
     required this.motorist,
     required this.provider,
+    required this.sessionToken,
+    required this.sessionExpiresAt,
   });
 
   final String phoneNumber;
   final MotoristRecord? motorist;
   final ProviderRecord? provider;
+  final String sessionToken;
+  final String sessionExpiresAt;
 
   factory AuthSessionRecord.fromJson(Map<String, dynamic> json) {
     return AuthSessionRecord(
@@ -576,6 +730,8 @@ class AuthSessionRecord {
       provider: json['provider'] is Map<String, dynamic>
           ? ProviderRecord.fromJson(json['provider'] as Map<String, dynamic>)
           : null,
+      sessionToken: (json['sessionToken'] ?? '').toString(),
+      sessionExpiresAt: (json['sessionExpiresAt'] ?? '').toString(),
     );
   }
 }

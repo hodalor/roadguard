@@ -9,6 +9,7 @@ const contactsRoutes = require('./contacts');
 const servicesRoutes = require('./services');
 const analyticsRoutes = require('./analytics');
 const authRoutes = require('./auth');
+const auditLogsRoutes = require('./auditLogs');
 const notificationsRoutes = require('./notifications');
 const settingsRoutes = require('./settings');
 
@@ -23,6 +24,7 @@ router.use('/contacts', contactsRoutes);
 router.use('/services', servicesRoutes);
 router.use('/analytics', analyticsRoutes);
 router.use('/auth', authRoutes);
+router.use('/audit-logs', auditLogsRoutes);
 router.use('/notifications', notificationsRoutes);
 router.use('/settings', settingsRoutes);
 

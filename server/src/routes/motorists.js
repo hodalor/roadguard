@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 
 const User = require('../models/User');
 const { store, upsertMotorist } = require('../utils/mvpStore');
+const { logAuditEvent } = require('../utils/auditLogger');
+const { hashPin, isValidPin, normalizePhoneNumber } = require('../utils/pinAuth');
 
 const router = express.Router();
 
@@ -23,10 +25,6 @@ function mapMotorist(user) {
     role: user.role || 'motorist',
     createdAt: user.createdAt,
   };
-}
-
-function isValidPin(pin) {
-  return /^\d{4}$/.test(String(pin || ''));
 }
 
 router.get('/', async (_req, res) => {
@@ -56,8 +54,9 @@ router.post('/', async (req, res) => {
     profileImageData,
     pin,
   } = req.body;
+  const normalizedPhoneNumber = normalizePhoneNumber(phoneNumber);
 
-  if (!fullName || !phoneNumber || !address || !idType || !idNumber || !profileImageData) {
+  if (!fullName || !normalizedPhoneNumber || !address || !idType || !idNumber || !profileImageData) {
     return res.status(400).json({
       message:
         'fullName, phoneNumber, address, idType, idNumber, and profileImageData are required.',
@@ -72,19 +71,24 @@ router.post('/', async (req, res) => {
 
   try {
     if (hasDatabaseConnection()) {
-      const existingMotorist = await User.findOne({ phoneNumber, role: 'motorist' });
+      const existingMotorist = await User.findOne({
+        phoneNumber: normalizedPhoneNumber,
+        role: 'motorist',
+      });
       const motorist = await User.findOneAndUpdate(
-        { phoneNumber },
+        { phoneNumber: normalizedPhoneNumber },
         {
           role: 'motorist',
           fullName,
-          phoneNumber,
+          phoneNumber: normalizedPhoneNumber,
           address,
           idType,
           idNumber,
           email: email || undefined,
           profileImageData,
-          pin: pin || existingMotorist?.pin || '1234',
+          pin: pin
+            ? hashPin(pin)
+            : existingMotorist?.pin || hashPin('1234'),
         },
         {
           new: true,
@@ -94,6 +98,19 @@ router.post('/', async (req, res) => {
         }
       );
 
+      await logAuditEvent({
+        level: 'info',
+        category: 'auth',
+        action: existingMotorist ? 'motorist_account_updated' : 'motorist_account_created',
+        actorType: 'motorist',
+        actorId: String(motorist._id),
+        phoneNumber: normalizedPhoneNumber,
+        message: existingMotorist
+          ? 'Motorist account updated successfully.'
+          : 'Motorist account created successfully.',
+        endpoint: '/api/motorists',
+      });
+
       return res.status(201).json({
         message: 'Motorist account saved.',
         data: mapMotorist(motorist),
@@ -102,13 +119,24 @@ router.post('/', async (req, res) => {
 
     const motorist = upsertMotorist({
       fullName,
-      phoneNumber,
+      phoneNumber: normalizedPhoneNumber,
       address,
       idType,
       idNumber,
       email,
       profileImageData,
-      pin,
+      pin: pin ? hashPin(pin) : undefined,
+    });
+
+    await logAuditEvent({
+      level: 'info',
+      category: 'auth',
+      action: 'motorist_account_saved_local',
+      actorType: 'motorist',
+      actorId: motorist.id,
+      phoneNumber: normalizedPhoneNumber,
+      message: 'Motorist account saved in local fallback store.',
+      endpoint: '/api/motorists',
     });
 
     return res.status(201).json({
@@ -116,6 +144,17 @@ router.post('/', async (req, res) => {
       data: motorist,
     });
   } catch (error) {
+    await logAuditEvent({
+      level: 'error',
+      category: 'auth',
+      action: 'motorist_account_save_failed',
+      actorType: 'motorist',
+      phoneNumber: normalizedPhoneNumber,
+      message: 'Unable to save motorist account.',
+      detail: error.message,
+      endpoint: '/api/motorists',
+    });
+
     return res.status(500).json({
       message: 'Unable to save motorist account.',
       error: error.message,

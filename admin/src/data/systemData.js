@@ -6,6 +6,7 @@ export const navigationItems = [
   { id: 'hazards', label: 'Hazards', path: '/hazards' },
   { id: 'guides', label: 'Emergency Guides', path: '/guides' },
   { id: 'settings', label: 'Settings', path: '/settings' },
+  { id: 'audit-logs', label: 'Audit Logs', path: '/audit-logs' },
 ];
 
 export const dashboardStats = [

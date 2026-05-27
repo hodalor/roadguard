@@ -1,9 +1,12 @@
 const { randomUUID } = require('crypto');
 
+const { hashPin } = require('./pinAuth');
+
 const store = {
   motorists: [],
   providers: [],
   sosEvents: [],
+  auditLogs: [],
   sosSequence: 1000,
 };
 
@@ -31,7 +34,7 @@ function upsertMotorist(data) {
     idNumber: data.idNumber,
     email: data.email || null,
     profileImageData: data.profileImageData,
-    pin: data.pin || (index >= 0 ? store.motorists[index].pin : '1234'),
+    pin: data.pin || (index >= 0 ? store.motorists[index].pin : hashPin('1234')),
     updatedAt: new Date().toISOString(),
   };
 
@@ -67,7 +70,7 @@ function upsertProvider(data) {
     idType: data.idType,
     idNumber: data.idNumber,
     profileImageData: data.profileImageData,
-    pin: data.pin || (index >= 0 ? store.providers[index].pin : '1234'),
+    pin: data.pin || (index >= 0 ? store.providers[index].pin : hashPin('1234')),
     shopImages: data.shopImages || [],
     serviceId: data.serviceId,
     serviceName: data.serviceName,

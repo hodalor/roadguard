@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 
 const ServiceProvider = require('../models/ServiceProvider');
 const ServiceCatalog = require('../models/ServiceCatalog');
+const { logAuditEvent } = require('../utils/auditLogger');
+const { hashPin, isValidPin, normalizePhoneNumber } = require('../utils/pinAuth');
 const {
   store,
   upsertProvider,
@@ -23,10 +25,6 @@ function toTitleCase(value) {
 
 function toObjectId(value) {
   return new mongoose.Types.ObjectId(String(value));
-}
-
-function isValidPin(pin) {
-  return /^\d{4}$/.test(String(pin || ''));
 }
 
 function mapProvider(provider, { adminView = false } = {}) {
@@ -208,6 +206,20 @@ router.patch('/:id/approval', async (req, res) => {
         return res.status(404).json({ message: 'Provider not found.' });
       }
 
+      await logAuditEvent({
+        level: 'info',
+        category: 'providers',
+        action: 'provider_approval_updated',
+        actorType: 'admin',
+        actorId: req.params.id,
+        phoneNumber: provider.phoneNumber,
+        message: `Provider approval updated to ${approvalStatus}.`,
+        endpoint: `/api/providers/${req.params.id}/approval`,
+        metadata: {
+          approvalStatus,
+        },
+      });
+
       return res.json({
         message: 'Provider approval updated.',
         data: mapProvider(provider, { adminView: true }),
@@ -225,11 +237,39 @@ router.patch('/:id/approval', async (req, res) => {
       updatedAt: new Date().toISOString(),
     };
 
+    await logAuditEvent({
+      level: 'info',
+      category: 'providers',
+      action: 'provider_approval_updated_local',
+      actorType: 'admin',
+      actorId: req.params.id,
+      phoneNumber: store.providers[index].phoneNumber,
+      message: `Provider approval updated to ${approvalStatus} in local fallback store.`,
+      endpoint: `/api/providers/${req.params.id}/approval`,
+      metadata: {
+        approvalStatus,
+      },
+    });
+
     return res.json({
       message: 'Provider approval updated.',
       data: mapProvider(store.providers[index], { adminView: true }),
     });
   } catch (error) {
+    await logAuditEvent({
+      level: 'error',
+      category: 'providers',
+      action: 'provider_approval_update_failed',
+      actorType: 'admin',
+      actorId: req.params.id,
+      message: 'Unable to update provider approval.',
+      detail: error.message,
+      endpoint: `/api/providers/${req.params.id}/approval`,
+      metadata: {
+        approvalStatus,
+      },
+    });
+
     return res.status(500).json({
       message: 'Unable to update provider approval.',
       error: error.message,
@@ -255,11 +295,12 @@ router.post('/register', async (req, res) => {
     currentLocationMapUrl,
     pin,
   } = req.body;
+  const normalizedPhoneNumber = normalizePhoneNumber(phoneNumber);
 
   if (
     !fullName ||
     !businessName ||
-    !phoneNumber ||
+    !normalizedPhoneNumber ||
     !address ||
     !idType ||
     !idNumber ||
@@ -289,7 +330,9 @@ router.post('/register', async (req, res) => {
     let serviceName = req.body.serviceName || '';
 
     if (hasDatabaseConnection()) {
-      const existingProvider = await ServiceProvider.findOne({ phoneNumber });
+      const existingProvider = await ServiceProvider.findOne({
+        phoneNumber: normalizedPhoneNumber,
+      });
       const service = await ServiceCatalog.findById(serviceId);
       if (!service || !service.isActive) {
         return res.status(400).json({
@@ -299,11 +342,11 @@ router.post('/register', async (req, res) => {
       serviceName = service.name;
 
       const provider = await ServiceProvider.findOneAndUpdate(
-        { phoneNumber },
+        { phoneNumber: normalizedPhoneNumber },
         {
           fullName,
           businessName,
-          phoneNumber,
+          phoneNumber: normalizedPhoneNumber,
           address,
           email: email || undefined,
           idType,
@@ -322,7 +365,9 @@ router.post('/register', async (req, res) => {
           },
           currentLocationLabel: currentLocationLabel || undefined,
           currentLocationMapUrl: currentLocationMapUrl || undefined,
-          pin: pin || existingProvider?.pin || '1234',
+          pin: pin
+            ? hashPin(pin)
+            : existingProvider?.pin || hashPin('1234'),
           availabilityStatus: 'available',
           approvalStatus: 'pending',
         },
@@ -336,6 +381,24 @@ router.post('/register', async (req, res) => {
 
       await provider.populate('serviceId', 'name');
 
+      await logAuditEvent({
+        level: 'info',
+        category: 'auth',
+        action: existingProvider ? 'provider_account_updated' : 'provider_account_created',
+        actorType: 'provider',
+        actorId: String(provider._id),
+        phoneNumber: normalizedPhoneNumber,
+        message: existingProvider
+          ? 'Provider account updated successfully.'
+          : 'Provider account created successfully.',
+        endpoint: '/api/providers/register',
+        metadata: {
+          approvalStatus: provider.approvalStatus,
+          serviceId: String(service._id),
+          serviceName,
+        },
+      });
+
       return res.status(201).json({
         message: 'Service provider registered.',
         data: mapProvider(provider),
@@ -345,7 +408,7 @@ router.post('/register', async (req, res) => {
     const provider = upsertProvider({
       fullName,
       businessName,
-      phoneNumber,
+      phoneNumber: normalizedPhoneNumber,
       address,
       email,
       idType,
@@ -364,9 +427,25 @@ router.post('/register', async (req, res) => {
       },
       currentLocationLabel,
       currentLocationMapUrl,
-      pin,
+      pin: pin ? hashPin(pin) : undefined,
       availabilityStatus: 'available',
       approvalStatus: 'pending',
+    });
+
+    await logAuditEvent({
+      level: 'info',
+      category: 'auth',
+      action: 'provider_account_saved_local',
+      actorType: 'provider',
+      actorId: provider.id,
+      phoneNumber: normalizedPhoneNumber,
+      message: 'Provider account saved in local fallback store.',
+      endpoint: '/api/providers/register',
+      metadata: {
+        approvalStatus: provider.approvalStatus,
+        serviceId,
+        serviceName,
+      },
     });
 
     return res.status(201).json({
@@ -374,6 +453,20 @@ router.post('/register', async (req, res) => {
       data: provider,
     });
   } catch (error) {
+    await logAuditEvent({
+      level: 'error',
+      category: 'auth',
+      action: 'provider_account_save_failed',
+      actorType: 'provider',
+      phoneNumber: normalizedPhoneNumber,
+      message: 'Unable to register service provider.',
+      detail: error.message,
+      endpoint: '/api/providers/register',
+      metadata: {
+        serviceId,
+      },
+    });
+
     return res.status(500).json({
       message: 'Unable to register service provider.',
       error: error.message,
@@ -402,6 +495,20 @@ router.patch('/:id/availability', async (req, res) => {
         return res.status(404).json({ message: 'Provider not found.' });
       }
 
+      await logAuditEvent({
+        level: 'info',
+        category: 'providers',
+        action: 'provider_availability_updated',
+        actorType: 'provider',
+        actorId: req.params.id,
+        phoneNumber: provider.phoneNumber,
+        message: `Provider availability changed to ${availabilityStatus}.`,
+        endpoint: `/api/providers/${req.params.id}/availability`,
+        metadata: {
+          availabilityStatus,
+        },
+      });
+
       return res.json({
         message: 'Provider availability updated.',
         data: mapProvider(provider),
@@ -413,11 +520,39 @@ router.patch('/:id/availability', async (req, res) => {
       return res.status(404).json({ message: 'Provider not found.' });
     }
 
+    await logAuditEvent({
+      level: 'info',
+      category: 'providers',
+      action: 'provider_availability_updated_local',
+      actorType: 'provider',
+      actorId: req.params.id,
+      phoneNumber: provider.phoneNumber,
+      message: `Provider availability changed to ${availabilityStatus} in local fallback store.`,
+      endpoint: `/api/providers/${req.params.id}/availability`,
+      metadata: {
+        availabilityStatus,
+      },
+    });
+
     return res.json({
       message: 'Provider availability updated.',
       data: provider,
     });
   } catch (error) {
+    await logAuditEvent({
+      level: 'error',
+      category: 'providers',
+      action: 'provider_availability_update_failed',
+      actorType: 'provider',
+      actorId: req.params.id,
+      message: 'Unable to update provider availability.',
+      detail: error.message,
+      endpoint: `/api/providers/${req.params.id}/availability`,
+      metadata: {
+        availabilityStatus,
+      },
+    });
+
     return res.status(500).json({
       message: 'Unable to update provider availability.',
       error: error.message,
