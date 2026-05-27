@@ -646,18 +646,64 @@ class _HomePageState extends State<HomePage> {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Add Motorist Account'),
-          content: SizedBox(
-            width: 520,
-            child: SingleChildScrollView(
-              child: _buildMotoristFormFields(
-                onSaved: () => Navigator.of(dialogContext).pop(),
-              ),
-            ),
+        return _buildBusyDialog(
+          title: 'Add Motorist Account',
+          width: 520,
+          isBusy: _isSavingMotorist,
+          busyMessage: 'Saving motorist profile...',
+          child: _buildMotoristFormFields(
+            onSaved: () => Navigator.of(dialogContext).pop(),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildBusyDialog({
+    required String title,
+    required double width,
+    required Widget child,
+    required bool isBusy,
+    required String busyMessage,
+  }) {
+    return AlertDialog(
+      title: Text(title),
+      content: SizedBox(
+        width: width,
+        child: Stack(
+          children: [
+            AbsorbPointer(
+              absorbing: isBusy,
+              child: SingleChildScrollView(
+                child: child,
+              ),
+            ),
+            if (isBusy)
+              Positioned.fill(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.92),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 12),
+                        Text(
+                          busyMessage,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -721,15 +767,13 @@ class _HomePageState extends State<HomePage> {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(_providerProfile == null ? 'Add Provider Account' : 'Update Provider Profile'),
-          content: SizedBox(
-            width: 560,
-            child: SingleChildScrollView(
-              child: _buildProviderFormFields(
-                onSaved: () => Navigator.of(dialogContext).pop(),
-              ),
-            ),
+        return _buildBusyDialog(
+          title: _providerProfile == null ? 'Add Provider Account' : 'Update Provider Profile',
+          width: 560,
+          isBusy: _isSavingProvider,
+          busyMessage: 'Saving provider profile...',
+          child: _buildProviderFormFields(
+            onSaved: () => Navigator.of(dialogContext).pop(),
           ),
         );
       },
@@ -1514,7 +1558,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   String _friendlyErrorMessage(String action, Object error) {
-    final raw = _formatError(error).toLowerCase();
+    final rawMessage = _formatError(error);
+    final raw = rawMessage.toLowerCase();
     if (raw.contains('socketconnection timed out') ||
         raw.contains('timed out') ||
         raw.contains('failed host lookup') ||
@@ -1523,9 +1568,29 @@ class _HomePageState extends State<HomePage> {
       return 'Unable to connect to the RoadGuide server right now. Please check the backend connection and try again.';
     }
 
+    if (raw.contains('no account exists')) {
+      return 'No account exists for that phone number. Check the number carefully or sign up first.';
+    }
+
+    if (raw.contains('incorrect pin')) {
+      return 'Incorrect PIN. Please enter the right 4-digit PIN and try again.';
+    }
+
+    if (raw.contains('current pin is incorrect')) {
+      return 'The current PIN you entered is not correct.';
+    }
+
+    if (raw.contains('pin must be exactly 4 digits') ||
+        raw.contains('valid 4-digit') ||
+        raw.contains('4-digit pin')) {
+      return 'PIN must be exactly 4 digits.';
+    }
+
     switch (action) {
       case 'login':
-        return 'Login failed. Check your phone number and PIN, then try again.';
+        return rawMessage.isNotEmpty
+            ? rawMessage
+            : 'Login failed. Check your phone number and PIN, then try again.';
       case 'reset_pin':
         return 'Could not reset your PIN right now. Please try again.';
       case 'save_motorist':
@@ -1695,13 +1760,58 @@ class _HomePageState extends State<HomePage> {
             ? const Color(0xFF0A6C3B)
             : const Color(0xFF1F2937);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: backgroundColor,
-        behavior: SnackBarBehavior.floating,
-      ),
+    _toastTimer?.cancel();
+    _toastEntry?.remove();
+
+    final overlay = Overlay.of(context, rootOverlay: true);
+
+    _toastEntry = OverlayEntry(
+      builder: (overlayContext) {
+        final viewPadding = MediaQuery.of(overlayContext).viewPadding;
+        return Positioned(
+          left: 16,
+          right: 16,
+          top: viewPadding.top + 16,
+          child: IgnorePointer(
+            child: Material(
+              color: Colors.transparent,
+              child: SafeArea(
+                bottom: false,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: backgroundColor,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x33000000),
+                        blurRadius: 14,
+                        offset: Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    child: Text(
+                      message,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
+
+    overlay.insert(_toastEntry!);
+    _toastTimer = Timer(const Duration(seconds: 3), () {
+      _toastEntry?.remove();
+      _toastEntry = null;
+    });
   }
 
   Future<void> _openHazardsPage() async {
@@ -1806,6 +1916,10 @@ class _HomePageState extends State<HomePage> {
               TextField(
                 controller: _loginPhoneController,
                 keyboardType: TextInputType.phone,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(11),
+                ],
                 decoration: const InputDecoration(labelText: 'Phone number'),
               ),
               const SizedBox(height: 12),
@@ -2512,6 +2626,10 @@ class _HomePageState extends State<HomePage> {
         TextField(
           controller: _motoristPhoneController,
           keyboardType: TextInputType.phone,
+          inputFormatters: [
+            FilteringTextInputFormatter.digitsOnly,
+            LengthLimitingTextInputFormatter(11),
+          ],
           decoration: const InputDecoration(labelText: 'Phone number'),
         ),
         const SizedBox(height: 12),
@@ -2612,6 +2730,10 @@ class _HomePageState extends State<HomePage> {
           TextField(
             controller: _providerPhoneController,
             keyboardType: TextInputType.phone,
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(11),
+            ],
             decoration: const InputDecoration(labelText: 'Phone number'),
           ),
           const SizedBox(height: 12),
