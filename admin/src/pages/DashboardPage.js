@@ -4,7 +4,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import { navigationItems } from '../data/systemData';
 
-export default function DashboardPage() {
+export default function DashboardPage({ adminUser, onLogout }) {
   const location = useLocation();
 
   const activeLabel = useMemo(() => {
@@ -34,9 +34,17 @@ export default function DashboardPage() {
         <div className="content-shell">
           <div className="content-shell__topbar">
             <span className="content-shell__label">RoadGuide Ghana</span>
-            <span className="content-shell__section">
-              {activeLabel} · {metaLabel}
-            </span>
+            <div className="content-shell__actions">
+              <span className="content-shell__section">
+                {activeLabel} · {metaLabel}
+              </span>
+              <span className="content-shell__section">
+                {adminUser?.fullName || adminUser?.phoneNumber || 'Admin'}
+              </span>
+              <button type="button" className="logout-button" onClick={onLogout}>
+                Logout
+              </button>
+            </div>
           </div>
           <Outlet />
         </div>

@@ -73,6 +73,13 @@ class MvpApiService {
         message.contains('failed host lookup');
   }
 
+  bool _looksLikeHtmlResponse(http.Response response) {
+    final body = response.body.trimLeft().toLowerCase();
+    return body.startsWith('<!doctype html') ||
+        body.startsWith('<html') ||
+        response.headers['content-type']?.toLowerCase().contains('text/html') == true;
+  }
+
   Future<http.Response> _requestWithFallback({
     required String path,
     Map<String, String?>? queryParameters,
@@ -83,14 +90,34 @@ class MvpApiService {
     for (final baseUrl in _baseUrls) {
       final uri = _buildUriForBase(baseUrl, path, queryParameters);
 
-      try {
-        final response = await send(uri).timeout(const Duration(seconds: 15));
-        _resolvedBaseUrl = baseUrl;
-        return response;
-      } catch (error) {
-        lastError = error;
-        if (!_shouldRetryOnConnectionError(error) || baseUrl == _baseUrls.last) {
-          break;
+      for (var attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          final response = await send(uri).timeout(const Duration(seconds: 15));
+
+          if (_looksLikeHtmlResponse(response)) {
+            lastError = Exception(
+              'The deployed backend returned an HTML page instead of API JSON at ${uri.toString()}.',
+            );
+
+            if (attempt == 0) {
+              await Future<void>.delayed(const Duration(seconds: 2));
+              continue;
+            }
+
+            break;
+          }
+
+          _resolvedBaseUrl = baseUrl;
+          return response;
+        } catch (error) {
+          lastError = error;
+          if (!_shouldRetryOnConnectionError(error)) {
+            break;
+          }
+          if (attempt == 0) {
+            await Future<void>.delayed(const Duration(seconds: 2));
+            continue;
+          }
         }
       }
     }
@@ -531,7 +558,7 @@ class MvpApiService {
         response.headers['content-type']?.contains('text/html') == true) {
       final requestedUrl = response.request?.url.toString() ?? currentBaseUrl;
       throw Exception(
-        'The app reached an HTML page instead of the RoadGuide API at $requestedUrl. Check API_BASE_URL and make sure the backend is running on port 5001.',
+        'The deployed backend returned an HTML page instead of RoadGuide API JSON at $requestedUrl. Check the deployed API URL or wait for the backend to finish waking up.',
       );
     }
 
