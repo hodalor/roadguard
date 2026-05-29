@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 
 import DataTablePage from '../components/DataTablePage';
 import { fetchJson, patchJson } from '../services/api';

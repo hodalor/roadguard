@@ -1,3 +1,5 @@
+import React from 'react';
+
 import DataTablePage from '../components/DataTablePage';
 import { useApiCollection } from '../hooks/useApiData';
 

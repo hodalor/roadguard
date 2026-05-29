@@ -1890,6 +1890,10 @@ class _HomePageState extends State<HomePage> {
       return 'Unable to connect to the RoadGuide server right now. Please check the backend connection and try again.';
     }
 
+    if (raw.contains('413') || raw.contains('entity too large') || raw.contains('payload too large')) {
+      return 'The images or form data are too large for the server right now. Try fewer or smaller images, or update the backend payload limit.';
+    }
+
     if (raw.contains('no account exists')) {
       return 'No account exists for that phone number. Check the number carefully or sign up first.';
     }
