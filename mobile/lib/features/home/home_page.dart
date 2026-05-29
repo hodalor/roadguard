@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter_contacts/flutter_contacts.dart' as flutter_contacts;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
@@ -80,6 +81,8 @@ class _HomePageState extends State<HomePage> {
   String? _providerProfileImageData;
   List<String> _providerShopImages = [];
   List<String> _requestImages = [];
+  List<_EmergencyContactDraft> _motoristEmergencyContacts = [];
+  List<_EmergencyContactDraft> _providerEmergencyContacts = [];
 
   double? _providerLatitude;
   double? _providerLongitude;
@@ -111,6 +114,8 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    _setMotoristEmergencyContactsFromRecords(const []);
+    _setProviderEmergencyContactsFromRecords(const []);
     _loadInitialData();
     _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (_isRegistered) {
@@ -126,6 +131,8 @@ class _HomePageState extends State<HomePage> {
     _toastTimer?.cancel();
     _blockingEntry?.remove();
     _toastEntry?.remove();
+    _disposeEmergencyContactDrafts(_motoristEmergencyContacts);
+    _disposeEmergencyContactDrafts(_providerEmergencyContacts);
     _motoristNameController.dispose();
     _motoristPhoneController.dispose();
     _motoristAddressController.dispose();
@@ -563,6 +570,202 @@ class _HomePageState extends State<HomePage> {
     _providerPinController.text = _providerPinController.text.trim().isEmpty
         ? '1234'
         : _providerPinController.text.trim();
+
+    if (_providerEmergencyContacts.every((contact) => contact.isBlank)) {
+      _setProviderEmergencyContactsFromRecords(
+        _motoristEmergencyContacts
+            .where((contact) => !contact.isBlank)
+            .map(
+              (contact) => EmergencyContactRecord(
+                name: contact.nameController.text.trim(),
+                phoneNumber: contact.phoneController.text.trim(),
+                email: contact.emailController.text.trim().isEmpty
+                    ? null
+                    : contact.emailController.text.trim(),
+                relationship: contact.relationshipController.text.trim(),
+                notifyViaSms: contact.notifyViaSms,
+                notifyViaEmail: contact.notifyViaEmail,
+              ),
+            )
+            .toList(),
+      );
+    }
+  }
+
+  _EmergencyContactDraft _createEmergencyContactDraft([EmergencyContactRecord? record]) {
+    return _EmergencyContactDraft(
+      nameController: TextEditingController(text: record?.name ?? ''),
+      phoneController: TextEditingController(text: record?.phoneNumber ?? ''),
+      emailController: TextEditingController(text: record?.email ?? ''),
+      relationshipController: TextEditingController(text: record?.relationship ?? ''),
+      notifyViaSms: record?.notifyViaSms ?? true,
+      notifyViaEmail: record?.notifyViaEmail ?? true,
+    );
+  }
+
+  void _disposeEmergencyContactDrafts(List<_EmergencyContactDraft> drafts) {
+    for (final draft in drafts) {
+      draft.dispose();
+    }
+  }
+
+  List<_EmergencyContactDraft> _buildEmergencyContactDrafts(
+    List<EmergencyContactRecord> records,
+  ) {
+    final drafts = records.map(_createEmergencyContactDraft).toList();
+    while (drafts.length < 3) {
+      drafts.add(_createEmergencyContactDraft());
+    }
+    return drafts;
+  }
+
+  void _setMotoristEmergencyContactsFromRecords(List<EmergencyContactRecord> records) {
+    final nextDrafts = _buildEmergencyContactDrafts(records);
+    _disposeEmergencyContactDrafts(_motoristEmergencyContacts);
+    _motoristEmergencyContacts = nextDrafts;
+  }
+
+  void _setProviderEmergencyContactsFromRecords(List<EmergencyContactRecord> records) {
+    final nextDrafts = _buildEmergencyContactDrafts(records);
+    _disposeEmergencyContactDrafts(_providerEmergencyContacts);
+    _providerEmergencyContacts = nextDrafts;
+  }
+
+  void _populateMotoristForm(MotoristRecord motorist) {
+    _motoristNameController.text = motorist.fullName;
+    _motoristPhoneController.text = motorist.phoneNumber;
+    _motoristAddressController.text = motorist.address;
+    _motoristEmailController.text = motorist.email ?? '';
+    _motoristIdNumberController.text = motorist.idNumber;
+    _selectedMotoristIdType = motorist.idType;
+    _motoristProfileImageData = motorist.profileImageData;
+    _setMotoristEmergencyContactsFromRecords(motorist.emergencyContacts);
+  }
+
+  void _populateProviderForm(ProviderRecord provider) {
+    _providerNameController.text = provider.fullName;
+    _providerBusinessController.text = provider.businessName;
+    _providerPhoneController.text = provider.phoneNumber;
+    _providerAddressController.text = provider.address;
+    _providerEmailController.text = provider.email ?? '';
+    _providerIdNumberController.text = provider.idNumber;
+    _providerServiceAreaController.text = provider.serviceArea;
+    _selectedProviderIdType = provider.idType;
+    _selectedProviderServiceId = provider.serviceId.isEmpty ? _selectedProviderServiceId : provider.serviceId;
+    _providerProfileImageData = provider.profileImageData;
+    _providerLocationLabel = provider.currentLocationLabel.isEmpty ? null : provider.currentLocationLabel;
+    _providerMapUrl = provider.currentLocationMapUrl.isEmpty ? null : provider.currentLocationMapUrl;
+    _providerLatitude = provider.coordinates?.latitude;
+    _providerLongitude = provider.coordinates?.longitude;
+    _setProviderEmergencyContactsFromRecords(provider.emergencyContacts);
+  }
+
+  Future<void> _pickEmergencyContactFromDevice(_EmergencyContactDraft contact) async {
+    final permissionGranted =
+        await flutter_contacts.FlutterContacts.requestPermission(readonly: true);
+    if (!permissionGranted) {
+      if (mounted) {
+        _showMessage('Contacts permission is required to choose from phone contacts.');
+      }
+      return;
+    }
+
+    final selectedContact = await flutter_contacts.FlutterContacts.openExternalPick();
+    if (selectedContact == null) {
+      return;
+    }
+
+    final fallbackName = [
+      selectedContact.name.first,
+      selectedContact.name.last,
+    ].where((part) => part.trim().isNotEmpty).join(' ');
+    final displayName = (selectedContact.displayName).trim().isNotEmpty
+        ? selectedContact.displayName.trim()
+        : fallbackName.trim();
+    final phoneNumber = selectedContact.phones.isNotEmpty
+        ? selectedContact.phones.first.number.trim()
+        : '';
+    final email = selectedContact.emails.isNotEmpty
+        ? selectedContact.emails.first.address.trim()
+        : '';
+
+    setState(() {
+      if (displayName.isNotEmpty) {
+        contact.nameController.text = displayName;
+      }
+      if (phoneNumber.isNotEmpty) {
+        contact.phoneController.text = phoneNumber;
+      }
+      if (email.isNotEmpty) {
+        contact.emailController.text = email;
+      }
+    });
+  }
+
+  List<EmergencyContactPayload>? _collectEmergencyContacts(
+    List<_EmergencyContactDraft> contacts, {
+    required String accountLabel,
+  }) {
+    final completedContacts = <EmergencyContactPayload>[];
+
+    for (final contact in contacts) {
+      final name = contact.nameController.text.trim();
+      final phone = contact.phoneController.text.trim();
+      final email = contact.emailController.text.trim();
+      final relationship = contact.relationshipController.text.trim();
+      final hasAnyValue =
+          name.isNotEmpty || phone.isNotEmpty || email.isNotEmpty || relationship.isNotEmpty;
+
+      if (!hasAnyValue) {
+        continue;
+      }
+
+      if (name.isEmpty || phone.isEmpty || relationship.isEmpty) {
+        _showMessage(
+          'Each $accountLabel emergency contact needs name, phone number, and relationship.',
+        );
+        return null;
+      }
+
+      completedContacts.add(
+        EmergencyContactPayload(
+          name: name,
+          phoneNumber: phone,
+          email: email.isEmpty ? null : email,
+          relationship: relationship,
+          notifyViaSms: contact.notifyViaSms,
+          notifyViaEmail: contact.notifyViaEmail,
+        ),
+      );
+    }
+
+    if (completedContacts.length < 3) {
+      _showMessage('Add at least three emergency contacts for the $accountLabel account.');
+      return null;
+    }
+
+    return completedContacts;
+  }
+
+  void _addEmergencyContact(List<_EmergencyContactDraft> contacts) {
+    setState(() {
+      contacts.add(_createEmergencyContactDraft());
+    });
+  }
+
+  void _removeEmergencyContact(
+    List<_EmergencyContactDraft> contacts,
+    _EmergencyContactDraft contact,
+  ) {
+    if (contacts.length <= 3) {
+      _showMessage('At least three emergency contacts are required.');
+      return;
+    }
+
+    setState(() {
+      contacts.remove(contact);
+      contact.dispose();
+    });
   }
 
   bool _isValidPin(String value) {
@@ -597,6 +800,13 @@ class _HomePageState extends State<HomePage> {
             ? 'provider'
             : 'motorist';
       });
+
+      if (session.motorist != null) {
+        _populateMotoristForm(session.motorist!);
+      }
+      if (session.provider != null) {
+        _populateProviderForm(session.provider!);
+      }
 
       if (session.motorist != null) {
         _requestLocationController.text = session.motorist!.address;
@@ -667,6 +877,13 @@ class _HomePageState extends State<HomePage> {
         _sessionToken = session.sessionToken;
         _sessionExpiresAt = session.sessionExpiresAt;
       });
+
+      if (session.motorist != null) {
+        _populateMotoristForm(session.motorist!);
+      }
+      if (session.provider != null) {
+        _populateProviderForm(session.provider!);
+      }
 
       _loginPinController.text = newPin;
       _resetCurrentPinController.text = newPin;
@@ -879,6 +1096,10 @@ class _HomePageState extends State<HomePage> {
     final email = _motoristEmailController.text.trim();
     final idNumber = _motoristIdNumberController.text.trim();
     final pin = _motoristPinController.text.trim();
+    final emergencyContacts = _collectEmergencyContacts(
+      _motoristEmergencyContacts,
+      accountLabel: 'motorist',
+    );
 
     if (name.isEmpty || phone.isEmpty || address.isEmpty || idNumber.isEmpty) {
       _showMessage('Motorist name, phone, address, and ID number are required.');
@@ -892,6 +1113,10 @@ class _HomePageState extends State<HomePage> {
 
     if (_motoristProfileImageData == null) {
       _showMessage('Motorist profile picture is required.');
+      return false;
+    }
+
+    if (emergencyContacts == null) {
       return false;
     }
 
@@ -910,6 +1135,7 @@ class _HomePageState extends State<HomePage> {
           profileImageData: _motoristProfileImageData!,
           pin: pin,
           email: email.isEmpty ? null : email,
+          emergencyContacts: emergencyContacts,
         ),
       );
 
@@ -923,6 +1149,8 @@ class _HomePageState extends State<HomePage> {
         _requestLocationController.text = motorist.address;
         _requestMapUrl = '';
       });
+
+      _populateMotoristForm(motorist);
 
       _syncProviderFormFromMotorist();
       final signedIn = await _completePostSaveSignIn(
@@ -966,6 +1194,10 @@ class _HomePageState extends State<HomePage> {
     final serviceArea = _providerServiceAreaController.text.trim();
     final pin = _providerPinController.text.trim();
     final serviceId = _selectedProviderServiceId;
+    final emergencyContacts = _collectEmergencyContacts(
+      _providerEmergencyContacts,
+      accountLabel: 'provider',
+    );
 
     if (fullName.isEmpty ||
         businessName.isEmpty ||
@@ -997,6 +1229,10 @@ class _HomePageState extends State<HomePage> {
       return false;
     }
 
+    if (emergencyContacts == null) {
+      return false;
+    }
+
     setState(() {
       _isSavingProvider = true;
     });
@@ -1016,6 +1252,7 @@ class _HomePageState extends State<HomePage> {
           serviceId: serviceId,
           serviceArea: serviceArea,
           pin: pin,
+          emergencyContacts: emergencyContacts,
           currentLocationLabel: _providerLocationLabel,
           currentLocationMapUrl: _providerMapUrl,
           latitude: _providerLatitude,
@@ -1034,6 +1271,8 @@ class _HomePageState extends State<HomePage> {
           _requestLocationController.text = provider.serviceArea;
         }
       });
+
+      _populateProviderForm(provider);
 
       final signedIn = await _completePostSaveSignIn(
         phone: phone,
@@ -1802,6 +2041,8 @@ class _HomePageState extends State<HomePage> {
 
     _motoristProfileImageData = null;
     _providerProfileImageData = null;
+    _setMotoristEmergencyContactsFromRecords(const []);
+    _setProviderEmergencyContactsFromRecords(const []);
 
     _showMessage('Logged out successfully.', isSuccess: true);
   }
@@ -2528,6 +2769,19 @@ class _HomePageState extends State<HomePage> {
                     label: 'Session',
                     value: 'Active until ${_formatTimestamp(_sessionExpiresAt!)}',
                   ),
+                const SizedBox(height: 8),
+                _EmergencyContactsSummary(
+                  contacts: _motoristProfile!.emergencyContacts,
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _openMotoristRegistrationModal,
+                    icon: const Icon(Icons.edit_outlined),
+                    label: const Text('Edit motorist profile'),
+                  ),
+                ),
               ],
             ),
           ),
@@ -2635,6 +2889,19 @@ class _HomePageState extends State<HomePage> {
                       child: const Text('Open provider location in Google Maps'),
                     ),
                   ),
+                const SizedBox(height: 8),
+                _EmergencyContactsSummary(
+                  contacts: _providerProfile!.emergencyContacts,
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _openProviderRegistrationModal,
+                    icon: const Icon(Icons.edit_outlined),
+                    label: const Text('Edit provider profile'),
+                  ),
+                ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Available for requests'),
@@ -2784,6 +3051,13 @@ class _HomePageState extends State<HomePage> {
           buttonLabel: 'Upload picture',
           imageBytes: _decodeImage(_motoristProfileImageData),
           onPressed: _pickMotoristProfileImage,
+        ),
+        const SizedBox(height: 12),
+        _buildEmergencyContactsEditor(
+          title: 'Emergency contacts',
+          subtitle:
+              'Add at least 3 contacts. You can type them manually or pick from your phone contacts.',
+          contacts: _motoristEmergencyContacts,
         ),
         const SizedBox(height: 16),
         SizedBox(
@@ -2955,6 +3229,13 @@ class _HomePageState extends State<HomePage> {
             imageDataList: _providerShopImages,
             onPressed: _pickProviderShopImages,
           ),
+          const SizedBox(height: 12),
+          _buildEmergencyContactsEditor(
+            title: 'Emergency contacts',
+            subtitle:
+                'Add at least 3 contacts. Choosing from phone contacts autofills name and phone.',
+            contacts: _providerEmergencyContacts,
+          ),
           const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
@@ -2973,6 +3254,54 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildEmergencyContactsEditor({
+    required String title,
+    required String subtitle,
+    required List<_EmergencyContactDraft> contacts,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F9FC),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Text(subtitle),
+          const SizedBox(height: 12),
+          ...contacts.asMap().entries.map(
+            (entry) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _EmergencyContactEditorCard(
+                index: entry.key,
+                contact: entry.value,
+                onPickFromContacts: () => _pickEmergencyContactFromDevice(entry.value),
+                onRemove: () => _removeEmergencyContact(contacts, entry.value),
+                canRemove: contacts.length > 3,
+                onChanged: () {
+                  setState(() {});
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => _addEmergencyContact(contacts),
+              icon: const Icon(Icons.add_circle_outline),
+              label: const Text('Add another contact'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -3408,6 +3737,180 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
+class _EmergencyContactsSummary extends StatelessWidget {
+  const _EmergencyContactsSummary({
+    required this.contacts,
+  });
+
+  final List<EmergencyContactRecord> contacts;
+
+  @override
+  Widget build(BuildContext context) {
+    if (contacts.isEmpty) {
+      return const _InlineNotice(
+        message: 'No emergency contacts saved yet.',
+        color: Color(0xFFB25B00),
+        background: Color(0xFFFFF4E6),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Emergency contacts',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        ...contacts.asMap().entries.map(
+          (entry) => Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF7F9FC),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${entry.key + 1}. ${entry.value.name}',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 4),
+                  Text('${entry.value.phoneNumber} • ${entry.value.relationship}'),
+                  if ((entry.value.email ?? '').isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(entry.value.email!),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmergencyContactEditorCard extends StatelessWidget {
+  const _EmergencyContactEditorCard({
+    required this.index,
+    required this.contact,
+    required this.onPickFromContacts,
+    required this.onRemove,
+    required this.canRemove,
+    required this.onChanged,
+  });
+
+  final int index;
+  final _EmergencyContactDraft contact;
+  final VoidCallback onPickFromContacts;
+  final VoidCallback onRemove;
+  final bool canRemove;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Contact ${index + 1}',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              IconButton(
+                onPressed: onPickFromContacts,
+                icon: const Icon(Icons.contacts_outlined),
+                tooltip: 'Choose from contacts',
+              ),
+              IconButton(
+                onPressed: canRemove ? onRemove : null,
+                icon: const Icon(Icons.delete_outline),
+                tooltip: 'Remove contact',
+              ),
+            ],
+          ),
+          TextField(
+            controller: contact.nameController,
+            decoration: const InputDecoration(labelText: 'Full name'),
+            onChanged: (_) => onChanged(),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: contact.phoneController,
+            keyboardType: TextInputType.phone,
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[0-9+\s()-]')),
+              LengthLimitingTextInputFormatter(20),
+            ],
+            decoration: const InputDecoration(labelText: 'Phone number'),
+            onChanged: (_) => onChanged(),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: contact.emailController,
+            keyboardType: TextInputType.emailAddress,
+            decoration: const InputDecoration(labelText: 'Email (optional)'),
+            onChanged: (_) => onChanged(),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: contact.relationshipController,
+            decoration: const InputDecoration(labelText: 'Relationship'),
+            onChanged: (_) => onChanged(),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  value: contact.notifyViaSms,
+                  onChanged: (value) {
+                    contact.notifyViaSms = value ?? true;
+                    onChanged();
+                  },
+                  title: const Text('SMS alerts'),
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
+              ),
+              Expanded(
+                child: CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  value: contact.notifyViaEmail,
+                  onChanged: (value) {
+                    contact.notifyViaEmail = value ?? true;
+                    onChanged();
+                  },
+                  title: const Text('Email alerts'),
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ImagePickerCard extends StatelessWidget {
   const _ImagePickerCard({
     required this.title,
@@ -3458,6 +3961,37 @@ class _ImagePickerCard extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _EmergencyContactDraft {
+  _EmergencyContactDraft({
+    required this.nameController,
+    required this.phoneController,
+    required this.emailController,
+    required this.relationshipController,
+    required this.notifyViaSms,
+    required this.notifyViaEmail,
+  });
+
+  final TextEditingController nameController;
+  final TextEditingController phoneController;
+  final TextEditingController emailController;
+  final TextEditingController relationshipController;
+  bool notifyViaSms;
+  bool notifyViaEmail;
+
+  bool get isBlank =>
+      nameController.text.trim().isEmpty &&
+      phoneController.text.trim().isEmpty &&
+      emailController.text.trim().isEmpty &&
+      relationshipController.text.trim().isEmpty;
+
+  void dispose() {
+    nameController.dispose();
+    phoneController.dispose();
+    emailController.dispose();
+    relationshipController.dispose();
   }
 }
 

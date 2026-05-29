@@ -1,7 +1,13 @@
 const express = require('express');
 const mongoose = require('mongoose');
 
+const NotificationChannelSettings = require('../models/NotificationChannelSettings');
 const ServiceCatalog = require('../models/ServiceCatalog');
+const { store } = require('../utils/mvpStore');
+const {
+  mapNotificationChannelSettings,
+  normalizeChannelProviders,
+} = require('../utils/notificationChannels');
 
 const router = express.Router();
 
@@ -133,6 +139,78 @@ router.patch('/service-catalog/:id', async (req, res) => {
   } catch (error) {
     return res.status(500).json({
       message: 'Unable to update service.',
+      error: error.message,
+    });
+  }
+});
+
+router.get('/notification-channels', async (_req, res) => {
+  try {
+    if (!hasDatabaseConnection()) {
+      if (!store.notificationChannelSettings) {
+        store.notificationChannelSettings = mapNotificationChannelSettings();
+      }
+
+      return res.json(store.notificationChannelSettings);
+    }
+
+    const record = await NotificationChannelSettings.findOneAndUpdate(
+      { singletonKey: 'default' },
+      { $setOnInsert: { singletonKey: 'default' } },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+      }
+    );
+
+    return res.json(mapNotificationChannelSettings(record));
+  } catch (error) {
+    return res.status(500).json({
+      message: 'Unable to load notification channels.',
+      error: error.message,
+    });
+  }
+});
+
+router.patch('/notification-channels', async (req, res) => {
+  const providers = normalizeChannelProviders(req.body?.providers || []);
+
+  try {
+    if (!hasDatabaseConnection()) {
+      store.notificationChannelSettings = mapNotificationChannelSettings({
+        singletonKey: 'default',
+        providers,
+        updatedAt: new Date().toISOString(),
+      });
+
+      return res.json({
+        message: 'Notification channels updated.',
+        data: store.notificationChannelSettings,
+      });
+    }
+
+    const record = await NotificationChannelSettings.findOneAndUpdate(
+      { singletonKey: 'default' },
+      {
+        singletonKey: 'default',
+        providers,
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+        runValidators: true,
+      }
+    );
+
+    return res.json({
+      message: 'Notification channels updated.',
+      data: mapNotificationChannelSettings(record),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: 'Unable to update notification channels.',
       error: error.message,
     });
   }

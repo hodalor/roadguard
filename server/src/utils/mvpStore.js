@@ -7,6 +7,7 @@ const store = {
   providers: [],
   sosEvents: [],
   auditLogs: [],
+  notificationChannelSettings: null,
   sosSequence: 1000,
 };
 
@@ -34,6 +35,7 @@ function upsertMotorist(data) {
     idNumber: data.idNumber,
     email: data.email || null,
     profileImageData: data.profileImageData,
+    emergencyContacts: Array.isArray(data.emergencyContacts) ? data.emergencyContacts : [],
     pin: data.pin || (index >= 0 ? store.motorists[index].pin : hashPin('1234')),
     updatedAt: new Date().toISOString(),
   };
@@ -70,6 +72,7 @@ function upsertProvider(data) {
     idType: data.idType,
     idNumber: data.idNumber,
     profileImageData: data.profileImageData,
+    emergencyContacts: Array.isArray(data.emergencyContacts) ? data.emergencyContacts : [],
     pin: data.pin || (index >= 0 ? store.providers[index].pin : hashPin('1234')),
     shopImages: data.shopImages || [],
     serviceId: data.serviceId,

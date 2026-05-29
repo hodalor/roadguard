@@ -1,10 +1,28 @@
-import React from 'react';
-
 import DataTablePage from '../components/DataTablePage';
 import { useApiCollection } from '../hooks/useApiData';
 
 export default function MotoristsPage() {
   const { data = [], error, isLoading } = useApiCollection('/motorists', []);
+
+  function renderEmergencyContacts(contacts) {
+    if (!Array.isArray(contacts) || contacts.length === 0) {
+      return <strong>No emergency contacts saved</strong>;
+    }
+
+    return (
+      <div className="detail-stack">
+        {contacts.map((contact, index) => (
+          <div key={`${contact.phoneNumber}-${index + 1}`} className="detail-item">
+            <span>{`Contact ${index + 1}`}</span>
+            <strong>
+              {contact.name} | {contact.phoneNumber} | {contact.relationship}
+              {contact.email ? ` | ${contact.email}` : ''}
+            </strong>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <DataTablePage
@@ -40,6 +58,15 @@ export default function MotoristsPage() {
             {
               label: 'Profile Image',
               value: record.profileImageData ? 'Uploaded' : 'Missing',
+            },
+          ],
+        },
+        {
+          title: 'Emergency Contacts',
+          items: [
+            {
+              label: 'Saved Contacts',
+              content: renderEmergencyContacts(record.emergencyContacts),
             },
           ],
         },

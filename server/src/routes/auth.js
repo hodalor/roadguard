@@ -7,6 +7,7 @@ const ServiceProvider = require('../models/ServiceProvider');
 const { store } = require('../utils/mvpStore');
 const { issueSessionToken, revokeSessionToken, verifySessionToken } = require('../utils/authSession');
 const { logAuditEvent } = require('../utils/auditLogger');
+const { mapEmergencyContact } = require('../utils/emergencyContacts');
 const {
   hashPin,
   isHashedPin,
@@ -41,6 +42,9 @@ function mapMotorist(user) {
     idNumber: user.idNumber,
     email: user.email || null,
     profileImageData: user.profileImageData || null,
+    emergencyContacts: Array.isArray(user.emergencyContacts)
+      ? user.emergencyContacts.map(mapEmergencyContact)
+      : [],
     role: user.role || 'motorist',
     createdAt: user.createdAt,
   };
@@ -63,6 +67,9 @@ function mapProvider(provider) {
     idType: provider.idType,
     idNumber: provider.idNumber,
     profileImageData: provider.profileImageData || '',
+    emergencyContacts: Array.isArray(provider.emergencyContacts)
+      ? provider.emergencyContacts.map(mapEmergencyContact)
+      : [],
     serviceId: String(provider.serviceId?._id || provider.serviceId || ''),
     serviceType: provider.serviceName || '',
     serviceName: provider.serviceName || '',

@@ -5,6 +5,11 @@ const User = require('../models/User');
 const { store, upsertMotorist } = require('../utils/mvpStore');
 const { logAuditEvent } = require('../utils/auditLogger');
 const { hashPin, isValidPin, normalizePhoneNumber } = require('../utils/pinAuth');
+const {
+  mapEmergencyContact,
+  normalizeEmergencyContacts,
+  validateEmergencyContacts,
+} = require('../utils/emergencyContacts');
 
 const router = express.Router();
 
@@ -22,6 +27,9 @@ function mapMotorist(user) {
     idNumber: user.idNumber,
     email: user.email || null,
     profileImageData: user.profileImageData || null,
+    emergencyContacts: Array.isArray(user.emergencyContacts)
+      ? user.emergencyContacts.map(mapEmergencyContact)
+      : [],
     role: user.role || 'motorist',
     createdAt: user.createdAt,
   };
@@ -53,6 +61,7 @@ router.post('/', async (req, res) => {
     email,
     profileImageData,
     pin,
+    emergencyContacts,
   } = req.body;
   const normalizedPhoneNumber = normalizePhoneNumber(phoneNumber);
 
@@ -75,6 +84,18 @@ router.post('/', async (req, res) => {
         phoneNumber: normalizedPhoneNumber,
         role: 'motorist',
       });
+      const normalizedEmergencyContacts =
+        emergencyContacts !== undefined
+          ? normalizeEmergencyContacts(emergencyContacts)
+          : Array.isArray(existingMotorist?.emergencyContacts)
+            ? normalizeEmergencyContacts(existingMotorist.emergencyContacts)
+            : [];
+      const contactError = validateEmergencyContacts(normalizedEmergencyContacts);
+      if (contactError) {
+        return res.status(400).json({
+          message: contactError,
+        });
+      }
       const motorist = await User.findOneAndUpdate(
         { phoneNumber: normalizedPhoneNumber },
         {
@@ -86,6 +107,7 @@ router.post('/', async (req, res) => {
           idNumber,
           email: email || undefined,
           profileImageData,
+          emergencyContacts: normalizedEmergencyContacts,
           pin: pin
             ? hashPin(pin)
             : existingMotorist?.pin || hashPin('1234'),
@@ -117,6 +139,14 @@ router.post('/', async (req, res) => {
       });
     }
 
+    const normalizedEmergencyContacts = normalizeEmergencyContacts(emergencyContacts);
+    const contactError = validateEmergencyContacts(normalizedEmergencyContacts);
+    if (contactError) {
+      return res.status(400).json({
+        message: contactError,
+      });
+    }
+
     const motorist = upsertMotorist({
       fullName,
       phoneNumber: normalizedPhoneNumber,
@@ -125,6 +155,7 @@ router.post('/', async (req, res) => {
       idNumber,
       email,
       profileImageData,
+      emergencyContacts: normalizedEmergencyContacts,
       pin: pin ? hashPin(pin) : undefined,
     });
 

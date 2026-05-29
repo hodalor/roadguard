@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 
 const { hashPin, isStoredPinFormat } = require('../utils/pinAuth');
+const emergencyContactEntrySchema = require('./schemas/EmergencyContactEntry');
 
 const vehicleSchema = new mongoose.Schema(
   {
@@ -54,6 +55,16 @@ const userSchema = new mongoose.Schema(
     },
     isVerified: { type: Boolean, default: false },
     vehicle: vehicleSchema,
+    emergencyContacts: {
+      type: [emergencyContactEntrySchema],
+      default: [],
+      validate: {
+        validator(entries) {
+          return Array.isArray(entries) && entries.length >= 3;
+        },
+        message: 'At least three emergency contacts are required.',
+      },
+    },
   },
   { timestamps: true }
 );

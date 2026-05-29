@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 
 const { hashPin, isStoredPinFormat } = require('../utils/pinAuth');
+const emergencyContactEntrySchema = require('./schemas/EmergencyContactEntry');
 
 const serviceProviderSchema = new mongoose.Schema(
   {
@@ -92,6 +93,16 @@ const serviceProviderSchema = new mongoose.Schema(
       default: 'pending',
     },
     rating: { type: Number, default: 0 },
+    emergencyContacts: {
+      type: [emergencyContactEntrySchema],
+      default: [],
+      validate: {
+        validator(entries) {
+          return Array.isArray(entries) && entries.length >= 3;
+        },
+        message: 'At least three emergency contacts are required.',
+      },
+    },
   },
   { timestamps: true }
 );

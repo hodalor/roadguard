@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import DataTablePage from '../components/DataTablePage';
 import { fetchJson, patchJson } from '../services/api';
@@ -69,6 +69,26 @@ export default function ProvidersPage() {
       <div className="detail-image-preview">
         {images.map((image, index) => (
           <img key={`${altPrefix}-${index + 1}`} src={image} alt={`${altPrefix} ${index + 1}`} />
+        ))}
+      </div>
+    );
+  }
+
+  function renderEmergencyContacts(contacts) {
+    if (!Array.isArray(contacts) || contacts.length === 0) {
+      return <strong>No emergency contacts saved</strong>;
+    }
+
+    return (
+      <div className="detail-stack">
+        {contacts.map((contact, index) => (
+          <div key={`${contact.phoneNumber}-${index + 1}`} className="detail-item">
+            <span>{`Contact ${index + 1}`}</span>
+            <strong>
+              {contact.name} | {contact.phoneNumber} | {contact.relationship}
+              {contact.email ? ` | ${contact.email}` : ''}
+            </strong>
+          </div>
         ))}
       </div>
     );
@@ -150,6 +170,15 @@ export default function ProvidersPage() {
             { label: 'Rating', value: record.rating },
             { label: 'Current Location', value: record.currentLocationLabel || 'Not fetched' },
             { label: 'Google Maps', value: record.currentLocationMapUrl || 'Not available' },
+          ],
+        },
+        {
+          title: 'Emergency Contacts',
+          items: [
+            {
+              label: 'Saved Contacts',
+              content: renderEmergencyContacts(record.emergencyContacts),
+            },
           ],
         },
       ]}

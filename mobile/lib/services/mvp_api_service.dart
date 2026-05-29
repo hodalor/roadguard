@@ -603,6 +603,7 @@ class MotoristRecord {
     required this.idNumber,
     required this.profileImageData,
     required this.email,
+    required this.emergencyContacts,
     required this.pinDefaultHint,
   });
 
@@ -614,6 +615,7 @@ class MotoristRecord {
   final String idNumber;
   final String profileImageData;
   final String? email;
+  final List<EmergencyContactRecord> emergencyContacts;
   final String pinDefaultHint;
 
   factory MotoristRecord.fromJson(Map<String, dynamic> json) {
@@ -626,6 +628,10 @@ class MotoristRecord {
       idNumber: (json['idNumber'] ?? '').toString(),
       profileImageData: (json['profileImageData'] ?? '').toString(),
       email: json['email']?.toString(),
+      emergencyContacts: (json['emergencyContacts'] as List<dynamic>? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(EmergencyContactRecord.fromJson)
+          .toList(),
       pinDefaultHint: (json['pinDefaultHint'] ?? '1234').toString(),
     );
   }
@@ -668,6 +674,7 @@ class ProviderRecord {
     required this.idType,
     required this.idNumber,
     required this.profileImageData,
+    required this.emergencyContacts,
     required this.serviceId,
     required this.serviceName,
     required this.serviceArea,
@@ -690,6 +697,7 @@ class ProviderRecord {
   final String idType;
   final String idNumber;
   final String profileImageData;
+  final List<EmergencyContactRecord> emergencyContacts;
   final String serviceId;
   final String serviceName;
   final String serviceArea;
@@ -716,6 +724,10 @@ class ProviderRecord {
       idType: (json['idType'] ?? '').toString(),
       idNumber: (json['idNumber'] ?? '').toString(),
       profileImageData: (json['profileImageData'] ?? '').toString(),
+      emergencyContacts: (json['emergencyContacts'] as List<dynamic>? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(EmergencyContactRecord.fromJson)
+          .toList(),
       serviceId: (json['serviceId'] ?? '').toString(),
       serviceName: (json['serviceName'] ?? json['serviceType'] ?? '').toString(),
       serviceArea: (json['serviceArea'] ?? json['address'] ?? '').toString(),
@@ -998,6 +1010,7 @@ class MotoristPayload {
     required this.idNumber,
     required this.profileImageData,
     required this.pin,
+    required this.emergencyContacts,
     this.email,
   });
 
@@ -1008,6 +1021,7 @@ class MotoristPayload {
   final String idNumber;
   final String profileImageData;
   final String pin;
+  final List<EmergencyContactPayload> emergencyContacts;
   final String? email;
 
   Map<String, dynamic> toJson() {
@@ -1020,6 +1034,7 @@ class MotoristPayload {
       'profileImageData': profileImageData,
       'pin': pin,
       'email': email,
+      'emergencyContacts': emergencyContacts.map((item) => item.toJson()).toList(),
     };
   }
 }
@@ -1037,6 +1052,7 @@ class ProviderPayload {
     required this.serviceId,
     required this.serviceArea,
     required this.pin,
+    required this.emergencyContacts,
     this.email,
     this.currentLocationLabel,
     this.currentLocationMapUrl,
@@ -1056,6 +1072,7 @@ class ProviderPayload {
   final String serviceId;
   final String serviceArea;
   final String pin;
+  final List<EmergencyContactPayload> emergencyContacts;
   final String? currentLocationLabel;
   final String? currentLocationMapUrl;
   final double? latitude;
@@ -1072,6 +1089,7 @@ class ProviderPayload {
       'idNumber': idNumber,
       'profileImageData': profileImageData,
       'shopImages': shopImages,
+      'emergencyContacts': emergencyContacts.map((item) => item.toJson()).toList(),
       'serviceId': serviceId,
       'serviceArea': serviceArea,
       'pin': pin,
@@ -1081,6 +1099,64 @@ class ProviderPayload {
         'latitude': latitude,
         'longitude': longitude,
       },
+    };
+  }
+}
+
+class EmergencyContactRecord {
+  const EmergencyContactRecord({
+    required this.name,
+    required this.phoneNumber,
+    required this.email,
+    required this.relationship,
+    required this.notifyViaSms,
+    required this.notifyViaEmail,
+  });
+
+  final String name;
+  final String phoneNumber;
+  final String? email;
+  final String relationship;
+  final bool notifyViaSms;
+  final bool notifyViaEmail;
+
+  factory EmergencyContactRecord.fromJson(Map<String, dynamic> json) {
+    return EmergencyContactRecord(
+      name: (json['name'] ?? '').toString(),
+      phoneNumber: (json['phoneNumber'] ?? '').toString(),
+      email: json['email']?.toString(),
+      relationship: (json['relationship'] ?? '').toString(),
+      notifyViaSms: json['notifyViaSms'] != false,
+      notifyViaEmail: json['notifyViaEmail'] != false,
+    );
+  }
+}
+
+class EmergencyContactPayload {
+  const EmergencyContactPayload({
+    required this.name,
+    required this.phoneNumber,
+    required this.email,
+    required this.relationship,
+    this.notifyViaSms = true,
+    this.notifyViaEmail = true,
+  });
+
+  final String name;
+  final String phoneNumber;
+  final String? email;
+  final String relationship;
+  final bool notifyViaSms;
+  final bool notifyViaEmail;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'name': name,
+      'phoneNumber': phoneNumber,
+      'email': email,
+      'relationship': relationship,
+      'notifyViaSms': notifyViaSms,
+      'notifyViaEmail': notifyViaEmail,
     };
   }
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import FormModal from '../components/FormModal';
 import PageHeader from '../components/PageHeader';
@@ -6,6 +6,7 @@ import { fetchJson, patchJson, postJson } from '../services/api';
 
 const tabs = [
   { id: 'content', label: 'Content' },
+  { id: 'channels', label: 'Channels' },
   { id: 'system', label: 'System' },
 ];
 
@@ -13,9 +14,12 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState('content');
   const [services, setServices] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingChannels, setIsLoadingChannels] = useState(true);
   const [error, setError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingChannels, setIsSavingChannels] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [channels, setChannels] = useState([]);
   const [form, setForm] = useState({
     name: '',
     description: '',
@@ -35,8 +39,23 @@ export default function SettingsPage() {
     }
   }
 
+  async function loadChannels() {
+    setIsLoadingChannels(true);
+    try {
+      const response = await fetchJson('/settings/notification-channels');
+      setChannels(Array.isArray(response?.providers) ? response.providers : []);
+      setError(null);
+    } catch (requestError) {
+      setChannels([]);
+      setError(requestError.message);
+    } finally {
+      setIsLoadingChannels(false);
+    }
+  }
+
   useEffect(() => {
     loadServices();
+    loadChannels();
   }, []);
 
   async function handleSubmit(event) {
@@ -67,6 +86,37 @@ export default function SettingsPage() {
       setError(null);
     } catch (requestError) {
       setError(requestError.message);
+    }
+  }
+
+  function updateChannelProvider(index, field, value) {
+    setChannels((current) =>
+      current.map((provider, providerIndex) =>
+        providerIndex === index
+          ? {
+              ...provider,
+              [field]: value,
+            }
+          : provider
+      )
+    );
+  }
+
+  async function saveChannels() {
+    setIsSavingChannels(true);
+    try {
+      const response = await patchJson('/settings/notification-channels', {
+        providers: channels.map((provider) => ({
+          ...provider,
+          priority: Number(provider.priority) || 1,
+        })),
+      });
+      setChannels(Array.isArray(response.data?.providers) ? response.data.providers : []);
+      setError(null);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setIsSavingChannels(false);
     }
   }
 
@@ -174,6 +224,98 @@ export default function SettingsPage() {
               {isLoading ? <div className="empty-state">Loading services...</div> : null}
             </div>
           </div>
+        ) : activeTab === 'channels' ? (
+          <div className="settings-stack">
+            <div className="settings-summary">
+              <div className="detail-item">
+                <span>Email Providers</span>
+                <strong>{channels.filter((provider) => provider.channel === 'email').length}</strong>
+              </div>
+              <div className="detail-item">
+                <span>SMS Providers</span>
+                <strong>{channels.filter((provider) => provider.channel === 'sms').length}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Active Providers</span>
+                <strong>{channels.filter((provider) => provider.isActive).length}</strong>
+              </div>
+            </div>
+
+            <div className="settings-actions">
+              <button
+                type="button"
+                className="primary-button"
+                onClick={saveChannels}
+                disabled={isSavingChannels}
+              >
+                {isSavingChannels ? 'Saving...' : 'Save Channels'}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={loadChannels}
+                disabled={isLoadingChannels}
+              >
+                Refresh
+              </button>
+            </div>
+
+            {error ? <div className="empty-state">{error}</div> : null}
+
+            <div className="table-scroll">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Channel</th>
+                    <th>Provider</th>
+                    <th>Priority</th>
+                    <th>Active</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {channels.map((provider, index) => (
+                    <tr key={`${provider.channel}-${provider.providerKey}`}>
+                      <td>{provider.channel.toUpperCase()}</td>
+                      <td>{provider.label}</td>
+                      <td>
+                        <input
+                          type="number"
+                          min="1"
+                          className="settings-inline-input"
+                          value={provider.priority}
+                          onChange={(event) =>
+                            updateChannelProvider(index, 'priority', event.target.value)
+                          }
+                        />
+                      </td>
+                      <td>
+                        <label className="settings-toggle">
+                          <input
+                            type="checkbox"
+                            checked={provider.isActive === true}
+                            onChange={(event) =>
+                              updateChannelProvider(index, 'isActive', event.target.checked)
+                            }
+                          />
+                          <span>{provider.isActive ? 'Enabled' : 'Disabled'}</span>
+                        </label>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {!isLoadingChannels && channels.length === 0 ? (
+                <div className="empty-state">
+                  No notification providers are configured yet.
+                </div>
+              ) : null}
+
+              {isLoadingChannels ? (
+                <div className="empty-state">Loading notification channels...</div>
+              ) : null}
+            </div>
+          </div>
         ) : (
           <div className="settings-stack">
             <div className="detail-grid">
@@ -188,6 +330,10 @@ export default function SettingsPage() {
               <div className="detail-item">
                 <span>Mobile Sync</span>
                 <strong>Motorist and provider forms now depend on these live service records.</strong>
+              </div>
+              <div className="detail-item">
+                <span>Emergency Alerts</span>
+                <strong>Email and SMS providers can be enabled together for failover.</strong>
               </div>
             </div>
           </div>

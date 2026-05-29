@@ -6,6 +6,11 @@ const ServiceCatalog = require('../models/ServiceCatalog');
 const { logAuditEvent } = require('../utils/auditLogger');
 const { hashPin, isValidPin, normalizePhoneNumber } = require('../utils/pinAuth');
 const {
+  mapEmergencyContact,
+  normalizeEmergencyContacts,
+  validateEmergencyContacts,
+} = require('../utils/emergencyContacts');
+const {
   store,
   upsertProvider,
   updateProviderAvailability,
@@ -48,6 +53,9 @@ function mapProvider(provider, { adminView = false } = {}) {
     idType: provider.idType,
     idNumber: provider.idNumber,
     profileImageData: provider.profileImageData || '',
+    emergencyContacts: Array.isArray(provider.emergencyContacts)
+      ? provider.emergencyContacts.map(mapEmergencyContact)
+      : [],
     shopImages: Array.isArray(provider.shopImages) ? provider.shopImages : [],
     serviceId: String(provider.serviceId?._id || provider.serviceId || ''),
     serviceType: provider.serviceName || provider.serviceType || '',
@@ -294,6 +302,7 @@ router.post('/register', async (req, res) => {
     currentLocationLabel,
     currentLocationMapUrl,
     pin,
+    emergencyContacts,
   } = req.body;
   const normalizedPhoneNumber = normalizePhoneNumber(phoneNumber);
 
@@ -333,6 +342,18 @@ router.post('/register', async (req, res) => {
       const existingProvider = await ServiceProvider.findOne({
         phoneNumber: normalizedPhoneNumber,
       });
+      const normalizedEmergencyContacts =
+        emergencyContacts !== undefined
+          ? normalizeEmergencyContacts(emergencyContacts)
+          : Array.isArray(existingProvider?.emergencyContacts)
+            ? normalizeEmergencyContacts(existingProvider.emergencyContacts)
+            : [];
+      const contactError = validateEmergencyContacts(normalizedEmergencyContacts);
+      if (contactError) {
+        return res.status(400).json({
+          message: contactError,
+        });
+      }
       const service = await ServiceCatalog.findById(serviceId);
       if (!service || !service.isActive) {
         return res.status(400).json({
@@ -352,6 +373,7 @@ router.post('/register', async (req, res) => {
           idType,
           idNumber,
           profileImageData,
+          emergencyContacts: normalizedEmergencyContacts,
           shopImages,
           serviceId: service._id,
           serviceName,
@@ -405,6 +427,14 @@ router.post('/register', async (req, res) => {
       });
     }
 
+    const normalizedEmergencyContacts = normalizeEmergencyContacts(emergencyContacts);
+    const contactError = validateEmergencyContacts(normalizedEmergencyContacts);
+    if (contactError) {
+      return res.status(400).json({
+        message: contactError,
+      });
+    }
+
     const provider = upsertProvider({
       fullName,
       businessName,
@@ -414,6 +444,7 @@ router.post('/register', async (req, res) => {
       idType,
       idNumber,
       profileImageData,
+      emergencyContacts: normalizedEmergencyContacts,
       shopImages,
       serviceId,
       serviceName,

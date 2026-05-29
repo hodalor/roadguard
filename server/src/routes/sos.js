@@ -6,6 +6,7 @@ const User = require('../models/User');
 const ServiceProvider = require('../models/ServiceProvider');
 const ServiceCatalog = require('../models/ServiceCatalog');
 const { store, createSosEvent, createTicket } = require('../utils/mvpStore');
+const { notifyRecipients } = require('../utils/notificationDispatch');
 
 const router = express.Router();
 
@@ -173,6 +174,50 @@ function mapSosRecord(event, { adminView = false } = {}) {
       ? provider?.businessName || event.assignedProviderName || 'Pending'
       : undefined,
   };
+}
+
+function buildRequesterEntity({ requesterType, motorist, requesterProvider }) {
+  return requesterType === 'motorist' ? motorist : requesterProvider;
+}
+
+function buildContactRecipients(contacts, channel) {
+  return (Array.isArray(contacts) ? contacts : [])
+    .filter((contact) =>
+      channel === 'email' ? contact.notifyViaEmail !== false : contact.notifyViaSms !== false
+    )
+    .map((contact) =>
+      channel === 'email'
+        ? String(contact.email || '').trim().toLowerCase()
+        : String(contact.phoneNumber || '').trim()
+    )
+    .filter(Boolean);
+}
+
+async function notifyEmergencyContacts({ contacts, subject, message, metadata }) {
+  const emailRecipients = buildContactRecipients(contacts, 'email');
+  const smsRecipients = buildContactRecipients(contacts, 'sms');
+
+  await Promise.all([
+    emailRecipients.length > 0
+      ? notifyRecipients({
+          channel: 'email',
+          recipients: emailRecipients,
+          subject,
+          message,
+          html: `<pre style="font-family:Arial,Helvetica,sans-serif;white-space:pre-wrap">${message}</pre>`,
+          metadata,
+        })
+      : Promise.resolve([]),
+    smsRecipients.length > 0
+      ? notifyRecipients({
+          channel: 'sms',
+          recipients: smsRecipients,
+          subject,
+          message,
+          metadata,
+        })
+      : Promise.resolve([]),
+  ]);
 }
 
 async function setNextDispatchProvider(event, startIndex = 0) {
@@ -505,6 +550,39 @@ router.post('/', async (req, res) => {
       await event.populate('currentNotifiedProviderId', 'businessName');
       await event.populate('directProviderId', 'businessName');
 
+      const requesterEntity = buildRequesterEntity({
+        requesterType,
+        motorist,
+        requesterProvider,
+      });
+      const requesterLabel =
+        requesterType === 'motorist'
+          ? motorist.fullName
+          : requesterProvider.businessName || requesterProvider.fullName;
+      const initialMessage = [
+        'RoadGuide Ghana emergency alert.',
+        `${requesterLabel} has sent an SOS request for ${service.name}.`,
+        `Issue: ${emergencyType}.`,
+        `Location: ${locationLabel}.`,
+        `Map: ${event.locationMapUrl || 'Not available'}.`,
+        note ? `Details: ${note}.` : 'Details: No extra note provided.',
+        directProviderId
+          ? 'A direct provider was selected first. Updates follow whether they accept or not.'
+          : 'Nearby providers are being contacted now. Updates follow whether any provider accepts or not.',
+      ].join('\n');
+
+      await notifyEmergencyContacts({
+        contacts: requesterEntity?.emergencyContacts || [],
+        subject: `RoadGuide SOS ${event.ticket}`,
+        message: initialMessage,
+        metadata: {
+          eventId: String(event._id),
+          ticket: event.ticket,
+          phase: 'created',
+          requesterType,
+        },
+      });
+
       return res.status(201).json({
         message: 'Emergency request created.',
         data: mapSosRecord(event),
@@ -773,7 +851,12 @@ router.patch('/:id/provider-response', async (req, res) => {
       await advanceExpiredDispatches();
 
       const [event, provider] = await Promise.all([
-        SosEvent.findById(req.params.id).populate('userId', 'fullName phoneNumber address'),
+        SosEvent.findById(req.params.id)
+          .populate('userId', 'fullName phoneNumber address emergencyContacts')
+          .populate(
+            'requesterProviderId',
+            'fullName businessName phoneNumber serviceArea emergencyContacts'
+          ),
         ServiceProvider.findById(providerId),
       ]);
 
@@ -812,6 +895,71 @@ router.patch('/:id/provider-response', async (req, res) => {
         event.ringExpiresAt = null;
         await event.save();
         await event.populate('assignedProviderId', 'businessName');
+
+        const requesterEntity = buildRequesterEntity({
+          requesterType: event.requesterType,
+          motorist: event.userId,
+          requesterProvider: event.requesterProviderId,
+        });
+        const requesterName =
+          event.requesterType === 'motorist'
+            ? event.userId?.fullName
+            : event.requesterProviderId?.businessName || event.requesterProviderId?.fullName;
+        const requesterFollowUp = [
+          'RoadGuide Ghana update.',
+          `Provider ${provider.businessName} has accepted request ${event.ticket}.`,
+          `Provider contact: ${provider.phoneNumber}.`,
+          `Service: ${event.requiredServiceName}.`,
+          `Provider area: ${provider.serviceArea}.`,
+          provider.currentLocationLabel
+            ? `Provider location: ${provider.currentLocationLabel}.`
+            : null,
+          provider.currentLocationMapUrl
+            ? `Provider map: ${provider.currentLocationMapUrl}.`
+            : null,
+          `Request location: ${event.locationLabel}.`,
+        ]
+          .filter(Boolean)
+          .join('\n');
+        const providerSafetyAlert = [
+          'RoadGuide Ghana provider safety update.',
+          `${provider.businessName} accepted request ${event.ticket}.`,
+          `Requester: ${requesterName || event.requesterName}.`,
+          `Requester phone: ${event.requesterPhoneNumber}.`,
+          `Service needed: ${event.requiredServiceName}.`,
+          `Requester location: ${event.locationLabel}.`,
+          event.locationMapUrl ? `Map: ${event.locationMapUrl}.` : null,
+          event.note ? `Details: ${event.note}.` : 'Details: No extra note provided.',
+        ]
+          .filter(Boolean)
+          .join('\n');
+
+        await Promise.all([
+          notifyEmergencyContacts({
+            contacts: requesterEntity?.emergencyContacts || [],
+            subject: `RoadGuide Provider Accepted ${event.ticket}`,
+            message: requesterFollowUp,
+            metadata: {
+              eventId: String(event._id),
+              ticket: event.ticket,
+              phase: 'accepted_by_provider',
+              requesterType: event.requesterType,
+              providerId: String(provider._id),
+            },
+          }),
+          notifyEmergencyContacts({
+            contacts: provider.emergencyContacts || [],
+            subject: `RoadGuide Provider Safety Alert ${event.ticket}`,
+            message: providerSafetyAlert,
+            metadata: {
+              eventId: String(event._id),
+              ticket: event.ticket,
+              phase: 'provider_acceptance_safety',
+              requesterType: event.requesterType,
+              providerId: String(provider._id),
+            },
+          }),
+        ]);
 
         return res.json({
           message: 'Emergency request accepted.',
