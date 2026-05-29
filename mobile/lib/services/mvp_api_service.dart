@@ -14,15 +14,30 @@ class MvpApiService {
 
   String get currentBaseUrl => _resolvedBaseUrl ?? _baseUrls.first;
 
+  bool _isLocalApiUrl(String value) {
+    final lower = value.toLowerCase();
+    return lower.contains('localhost') ||
+        lower.contains('127.0.0.1') ||
+        lower.contains('10.0.2.2');
+  }
+
   List<String> get _baseUrls {
     final urls = <String>[];
     final configuredUrl = MobileEnv.apiBaseUrl?.trim();
+    final shouldIncludeLocalFallbacks =
+        configuredUrl == null || configuredUrl.isEmpty || _isLocalApiUrl(configuredUrl);
     if (configuredUrl != null && configuredUrl.isNotEmpty) {
       urls.add(configuredUrl);
     }
 
     if (kIsWeb) {
-      urls.add('http://localhost:5001/api');
+      if (shouldIncludeLocalFallbacks) {
+        urls.add('http://localhost:5001/api');
+      }
+      return urls.toSet().toList();
+    }
+
+    if (!shouldIncludeLocalFallbacks) {
       return urls.toSet().toList();
     }
 
@@ -875,6 +890,7 @@ class SosRequestRecord {
     required this.providerRequesterId,
     required this.requesterName,
     required this.requesterPhoneNumber,
+    required this.requesterEmail,
     required this.motoristName,
     required this.emergencyType,
     required this.requiredServiceId,
@@ -886,6 +902,8 @@ class SosRequestRecord {
     required this.status,
     required this.assignedProviderId,
     required this.assignedProviderName,
+    required this.assignedProviderPhoneNumber,
+    required this.assignedProviderEmail,
     required this.directProviderId,
     required this.directProviderName,
     required this.currentNotifiedProviderId,
@@ -903,6 +921,7 @@ class SosRequestRecord {
   final String? providerRequesterId;
   final String requesterName;
   final String requesterPhoneNumber;
+  final String requesterEmail;
   final String motoristName;
   final String emergencyType;
   final String? requiredServiceId;
@@ -914,6 +933,8 @@ class SosRequestRecord {
   final String status;
   final String? assignedProviderId;
   final String? assignedProviderName;
+  final String? assignedProviderPhoneNumber;
+  final String? assignedProviderEmail;
   final String? directProviderId;
   final String? directProviderName;
   final String? currentNotifiedProviderId;
@@ -932,6 +953,7 @@ class SosRequestRecord {
       providerRequesterId: json['providerRequesterId']?.toString(),
       requesterName: (json['requesterName'] ?? json['motoristName'] ?? '').toString(),
       requesterPhoneNumber: (json['requesterPhoneNumber'] ?? '').toString(),
+      requesterEmail: (json['requesterEmail'] ?? '').toString(),
       motoristName: (json['motoristName'] ?? json['requesterName'] ?? '').toString(),
       emergencyType: (json['emergencyType'] ?? '').toString(),
       requiredServiceId: json['requiredServiceId']?.toString(),
@@ -946,6 +968,8 @@ class SosRequestRecord {
       status: (json['status'] ?? '').toString(),
       assignedProviderId: json['assignedProviderId']?.toString(),
       assignedProviderName: json['assignedProviderName']?.toString(),
+      assignedProviderPhoneNumber: json['assignedProviderPhoneNumber']?.toString(),
+      assignedProviderEmail: json['assignedProviderEmail']?.toString(),
       directProviderId: json['directProviderId']?.toString(),
       directProviderName: json['directProviderName']?.toString(),
       currentNotifiedProviderId: json['currentNotifiedProviderId']?.toString(),

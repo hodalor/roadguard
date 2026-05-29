@@ -135,6 +135,8 @@ function mapSosRecord(event, { adminView = false } = {}) {
       requesterProvider?.phoneNumber ||
       event.requesterPhoneNumber ||
       '',
+    requesterEmail:
+      motorist?.email || requesterProvider?.email || event.requesterEmail || '',
     emergencyType: event.emergencyType,
     requiredServiceId: objectIdString(event.requiredServiceId),
     requiredServiceType: event.requiredServiceName,
@@ -150,6 +152,8 @@ function mapSosRecord(event, { adminView = false } = {}) {
       ? String(provider._id)
       : objectIdString(event.assignedProviderId),
     assignedProviderName: provider?.businessName || event.assignedProviderName || null,
+    assignedProviderPhoneNumber: provider?.phoneNumber || event.assignedProviderPhoneNumber || null,
+    assignedProviderEmail: provider?.email || event.assignedProviderEmail || null,
     directProviderId: directProvider
       ? String(directProvider._id)
       : objectIdString(event.directProviderId),
@@ -366,9 +370,9 @@ router.get('/mvp', async (req, res) => {
 
       const [events, viewerProvider] = await Promise.all([
         SosEvent.find(filters)
-          .populate('userId', 'fullName phoneNumber address')
-          .populate('requesterProviderId', 'fullName businessName phoneNumber')
-          .populate('assignedProviderId', 'businessName')
+          .populate('userId', 'fullName phoneNumber email address')
+          .populate('requesterProviderId', 'fullName businessName phoneNumber email')
+          .populate('assignedProviderId', 'businessName phoneNumber email')
           .populate('currentNotifiedProviderId', 'businessName')
           .populate('directProviderId', 'businessName')
           .populate('requiredServiceId', 'name')
@@ -412,9 +416,9 @@ router.get('/', async (_req, res) => {
       await advanceExpiredDispatches();
 
       const events = await SosEvent.find()
-        .populate('userId', 'fullName phoneNumber address')
-        .populate('requesterProviderId', 'fullName businessName phoneNumber')
-        .populate('assignedProviderId', 'businessName')
+        .populate('userId', 'fullName phoneNumber email address')
+        .populate('requesterProviderId', 'fullName businessName phoneNumber email')
+        .populate('assignedProviderId', 'businessName phoneNumber email')
         .populate('currentNotifiedProviderId', 'businessName')
         .populate('directProviderId', 'businessName')
         .sort({ createdAt: -1 });
@@ -544,8 +548,8 @@ router.post('/', async (req, res) => {
       }
 
       await event.save();
-      await event.populate('userId', 'fullName phoneNumber address');
-      await event.populate('requesterProviderId', 'fullName businessName phoneNumber');
+      await event.populate('userId', 'fullName phoneNumber email address');
+      await event.populate('requesterProviderId', 'fullName businessName phoneNumber email');
       await event.populate('requiredServiceId', 'name');
       await event.populate('currentNotifiedProviderId', 'businessName');
       await event.populate('directProviderId', 'businessName');
@@ -852,10 +856,10 @@ router.patch('/:id/provider-response', async (req, res) => {
 
       const [event, provider] = await Promise.all([
         SosEvent.findById(req.params.id)
-          .populate('userId', 'fullName phoneNumber address emergencyContacts')
+          .populate('userId', 'fullName phoneNumber email address emergencyContacts')
           .populate(
             'requesterProviderId',
-            'fullName businessName phoneNumber serviceArea emergencyContacts'
+            'fullName businessName phoneNumber email serviceArea emergencyContacts'
           ),
         ServiceProvider.findById(providerId),
       ]);
@@ -894,7 +898,7 @@ router.patch('/:id/provider-response', async (req, res) => {
         event.ringStartedAt = null;
         event.ringExpiresAt = null;
         await event.save();
-        await event.populate('assignedProviderId', 'businessName');
+        await event.populate('assignedProviderId', 'businessName phoneNumber email');
 
         const requesterEntity = buildRequesterEntity({
           requesterType: event.requesterType,

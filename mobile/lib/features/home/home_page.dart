@@ -119,7 +119,7 @@ class _HomePageState extends State<HomePage> {
     _loadInitialData();
     _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (_isRegistered) {
-        _refreshSignedInData();
+        _refreshSignedInData(silent: true);
       }
     });
   }
@@ -420,15 +420,23 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _refreshSignedInData({bool notifyOnError = false}) async {
+  Future<void> _refreshSignedInData({
+    bool notifyOnError = false,
+    bool silent = false,
+    bool refreshProviders = false,
+  }) async {
     if (!_isRegistered) {
       return;
     }
 
-    setState(() {
-      _isLoadingRequests = true;
+    if (!silent) {
+      setState(() {
+        _isLoadingRequests = true;
+        _requestLoadError = null;
+      });
+    } else {
       _requestLoadError = null;
-    });
+    }
 
     try {
       final ownRequests = <SosRequestRecord>[];
@@ -461,7 +469,9 @@ class _HomePageState extends State<HomePage> {
       });
 
       _syncRingState();
-      await _loadNearbyProviders();
+      if (refreshProviders) {
+        await _loadNearbyProviders(notifyOnError: notifyOnError, silent: silent);
+      }
     } catch (error) {
       if (!mounted) {
         return;
@@ -482,7 +492,7 @@ class _HomePageState extends State<HomePage> {
         _showMessage(_requestLoadError!, isError: true);
       }
     } finally {
-      if (mounted) {
+      if (mounted && !silent) {
         setState(() {
           _isLoadingRequests = false;
         });
@@ -490,15 +500,22 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _loadNearbyProviders({bool notifyOnError = false}) async {
+  Future<void> _loadNearbyProviders({
+    bool notifyOnError = false,
+    bool silent = false,
+  }) async {
     if (!_isRegistered) {
       return;
     }
 
-    setState(() {
-      _isLoadingProviders = true;
+    if (!silent) {
+      setState(() {
+        _isLoadingProviders = true;
+        _providerLoadError = null;
+      });
+    } else {
       _providerLoadError = null;
-    });
+    }
 
     try {
       final latitude =
@@ -546,7 +563,7 @@ class _HomePageState extends State<HomePage> {
         _showMessage(_providerLoadError!, isError: true);
       }
     } finally {
-      if (mounted) {
+      if (mounted && !silent) {
         setState(() {
           _isLoadingProviders = false;
         });
@@ -2069,12 +2086,7 @@ class _HomePageState extends State<HomePage> {
       return null;
     }
 
-    try {
-      final parts = dataUrl.split(',');
-      return base64Decode(parts.length > 1 ? parts.last : dataUrl);
-    } catch (_) {
-      return null;
-    }
+    return _DecodedImageCache.decode(dataUrl);
   }
 
   void _showMessage(
@@ -2178,7 +2190,12 @@ class _HomePageState extends State<HomePage> {
         actions: _isRegistered
             ? [
                 IconButton(
-                  onPressed: _isLoadingRequests ? null : () => _refreshSignedInData(notifyOnError: true),
+                  onPressed: _isLoadingRequests
+                      ? null
+                      : () => _refreshSignedInData(
+                            notifyOnError: true,
+                            refreshProviders: _currentIndex == 0 || _currentIndex == 3,
+                          ),
                   icon: const Icon(Icons.refresh),
                 ),
               ]
@@ -2274,12 +2291,6 @@ class _HomePageState extends State<HomePage> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const _HeroBanner(
-          title: 'Emergency requests',
-          subtitle:
-              'One active request per service is allowed. Cancel the current request before creating another in the same category.',
-        ),
-        const SizedBox(height: 20),
         _SectionCard(
           title: 'Emergency tools',
           subtitle: 'Choose what you want to do first, then open only the tool you need',
@@ -2568,12 +2579,6 @@ class _HomePageState extends State<HomePage> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const _HeroBanner(
-          title: 'Nearby providers',
-          subtitle:
-              'Motorists can view nearby providers and send a direct request to one provider. If they do not respond, the request opens to others.',
-        ),
-        const SizedBox(height: 20),
         _SectionCard(
           title: 'Provider list',
           subtitle: 'Shows all providers, and uses your captured request location when available',
@@ -2634,15 +2639,6 @@ class _HomePageState extends State<HomePage> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        _HeroBanner(
-          title: 'Incoming requests',
-          subtitle: provider == null
-              ? 'Complete the provider profile from the profile tab.'
-              : provider.isApproved
-                  ? 'Your phone rings here for 30 seconds when RoadGuide sends a request to you first.'
-                  : 'Your provider profile is pending approval. You can still request help, but incoming jobs stay locked until approval.',
-        ),
-        const SizedBox(height: 20),
         if (provider != null && !provider.isApproved)
           const _InlineNotice(
             message: 'Provider status: pending approval',
@@ -2701,11 +2697,6 @@ class _HomePageState extends State<HomePage> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const _HeroBanner(
-          title: 'History',
-          subtitle: 'Track your request status, exact address, images, and assigned provider.',
-        ),
-        const SizedBox(height: 20),
         _SectionCard(
           title: 'Request history',
           subtitle: 'Shows every request record for this account, no matter the status',
@@ -2748,12 +2739,6 @@ class _HomePageState extends State<HomePage> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const _HeroBanner(
-          title: 'Profile',
-          subtitle:
-              'Motorists do not see a provider account tab. Upgrade from here when you want to become a provider.',
-        ),
-        const SizedBox(height: 20),
         if (_motoristProfile != null)
           _SectionCard(
             title: 'Motorist profile',
@@ -3310,45 +3295,6 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-class _HeroBanner extends StatelessWidget {
-  const _HeroBanner({
-    required this.title,
-    required this.subtitle,
-  });
-
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFF081A3A),
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            subtitle,
-            style: const TextStyle(color: Colors.white70, fontSize: 15),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _InlineNotice extends StatelessWidget {
   const _InlineNotice({
     required this.message,
@@ -3400,18 +3346,19 @@ class _SectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               title,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
             ),
-            const SizedBox(height: 4),
-            Text(subtitle, style: TextStyle(color: Colors.grey.shade700)),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             child,
           ],
         ),
@@ -3470,6 +3417,8 @@ class _RequestTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final showAcceptedContacts = request.status == 'accepted_by_provider';
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
@@ -3508,6 +3457,16 @@ class _RequestTile extends StatelessWidget {
           const SizedBox(height: 4),
           Text('Assigned provider: ${request.assignedProviderName ?? 'Pending'}'),
           const SizedBox(height: 4),
+          if (showAcceptedContacts && (request.assignedProviderPhoneNumber ?? '').isNotEmpty)
+            Text('Provider phone: ${request.assignedProviderPhoneNumber}'),
+          if (showAcceptedContacts && (request.assignedProviderEmail ?? '').isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text('Provider email: ${request.assignedProviderEmail}'),
+          ],
+          if (showAcceptedContacts &&
+              ((request.assignedProviderPhoneNumber ?? '').isNotEmpty ||
+                  (request.assignedProviderEmail ?? '').isNotEmpty))
+            const SizedBox(height: 4),
           if (request.directProviderName != null)
             Text('Direct provider: ${request.directProviderName}'),
           if (request.directProviderName != null) const SizedBox(height: 4),
@@ -3552,6 +3511,8 @@ class _ProviderRequestCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final showAcceptedContacts = request.status == 'accepted_by_provider';
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
@@ -3588,6 +3549,19 @@ class _ProviderRequestCard extends StatelessWidget {
             ),
           const SizedBox(height: 4),
           Text('Note: ${request.note.isEmpty ? 'No additional note' : request.note}'),
+          if (showAcceptedContacts && request.requesterPhoneNumber.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            const Text(
+              'Requester contact',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            Text('Phone: ${request.requesterPhoneNumber}'),
+            if (request.requesterEmail.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text('Email: ${request.requesterEmail}'),
+            ],
+          ],
           if (request.requestImages.isNotEmpty) const SizedBox(height: 8),
           if (request.requestImages.isNotEmpty)
             Wrap(
@@ -3600,30 +3574,34 @@ class _ProviderRequestCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text('Created: $createdAtLabel'),
           const SizedBox(height: 12),
-          Row(
+          Column(
             children: [
-              Expanded(
-                child: FilledButton(
-                  onPressed: onAccept,
-                  child: const Text('Accept'),
-                ),
+              _ActionButtonCard(
+                label: 'Accept',
+                icon: Icons.check_circle_outline,
+                backgroundColor: const Color(0xFFFF6A00),
+                foregroundColor: Colors.white,
+                onTap: onAccept,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: onReject,
-                  child: const Text('Reject'),
-                ),
+              const SizedBox(height: 10),
+              _ActionButtonCard(
+                label: 'Reject',
+                icon: Icons.close_rounded,
+                backgroundColor: Colors.white,
+                foregroundColor: const Color(0xFF9A3412),
+                borderColor: const Color(0xFFF59E0B),
+                onTap: onReject,
+              ),
+              const SizedBox(height: 10),
+              _ActionButtonCard(
+                label: 'Offer to help',
+                icon: Icons.volunteer_activism_outlined,
+                backgroundColor: const Color(0xFFFFF7ED),
+                foregroundColor: const Color(0xFF9A3412),
+                borderColor: const Color(0xFFF3D3B2),
+                onTap: onOffer,
               ),
             ],
-          ),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton(
-              onPressed: onOffer,
-              child: const Text('Offer to help'),
-            ),
           ),
         ],
       ),
@@ -3682,44 +3660,58 @@ class _EmergencyTriangleAction extends StatelessWidget {
     return InkWell(
       borderRadius: BorderRadius.circular(18),
       onTap: onTap,
-      child: Column(
-        children: [
-          AspectRatio(
-            aspectRatio: 1,
-            child: ClipPath(
-              clipper: _TriangleClipper(),
-              child: Container(
-                color: accentColor.withValues(alpha: 0.14),
-                child: Center(
-                  child: Icon(icon, size: 34, color: accentColor),
-                ),
-              ),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 148),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: accentColor.withValues(alpha: 0.18)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x14000000),
+              blurRadius: 16,
+              offset: Offset(0, 8),
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
-        ],
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                color: accentColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icon, size: 24, color: accentColor),
+            ),
+            const SizedBox(height: 28),
+            Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Text(
+                  'Open',
+                  style: TextStyle(
+                    color: accentColor,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(Icons.arrow_forward_rounded, size: 16, color: accentColor),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
-}
-
-class _TriangleClipper extends CustomClipper<Path> {
-  @override
-  Path getClip(Size size) {
-    return Path()
-      ..moveTo(size.width / 2, 0)
-      ..lineTo(size.width, size.height)
-      ..lineTo(0, size.height)
-      ..close();
-  }
-
-  @override
-  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
 
 class _EmptyState extends StatelessWidget {
@@ -3915,6 +3907,79 @@ class _EmergencyContactEditorCard extends StatelessWidget {
   }
 }
 
+class _ActionButtonCard extends StatelessWidget {
+  const _ActionButtonCard({
+    required this.label,
+    required this.icon,
+    required this.backgroundColor,
+    required this.foregroundColor,
+    required this.onTap,
+    this.borderColor,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color backgroundColor;
+  final Color foregroundColor;
+  final VoidCallback? onTap;
+  final Color? borderColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final isEnabled = onTap != null;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Ink(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: isEnabled ? backgroundColor : const Color(0xFFF3F4F6),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: isEnabled
+                  ? (borderColor ?? backgroundColor)
+                  : const Color(0xFFE5E7EB),
+            ),
+            boxShadow: isEnabled
+                ? const [
+                    BoxShadow(
+                      color: Color(0x14000000),
+                      blurRadius: 14,
+                      offset: Offset(0, 8),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                size: 20,
+                color: isEnabled ? foregroundColor : const Color(0xFF9CA3AF),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: isEnabled ? foregroundColor : const Color(0xFF9CA3AF),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ImagePickerCard extends StatelessWidget {
   const _ImagePickerCard({
     required this.title,
@@ -3947,14 +4012,10 @@ class _ImagePickerCard extends StatelessWidget {
           Text(subtitle),
           const SizedBox(height: 12),
           if (imageBytes != null)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.memory(
-                imageBytes!,
-                height: 140,
-                width: 140,
-                fit: BoxFit.cover,
-              ),
+            _PreviewableMemoryImage(
+              bytes: imageBytes!,
+              width: 140,
+              height: 140,
             ),
           if (imageBytes != null) const SizedBox(height: 12),
           OutlinedButton.icon(
@@ -4014,15 +4075,6 @@ class _MultiImagePickerCard extends StatelessWidget {
   final List<String> imageDataList;
   final VoidCallback onPressed;
 
-  Uint8List? _decode(String dataUrl) {
-    try {
-      final parts = dataUrl.split(',');
-      return base64Decode(parts.length > 1 ? parts.last : dataUrl);
-    } catch (_) {
-      return null;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -4044,17 +4096,11 @@ class _MultiImagePickerCard extends StatelessWidget {
               spacing: 10,
               runSpacing: 10,
               children: imageDataList
-                  .map(_decode)
-                  .whereType<Uint8List>()
                   .map(
-                    (bytes) => ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.memory(
-                        bytes,
-                        height: 84,
-                        width: 84,
-                        fit: BoxFit.cover,
-                      ),
+                    (image) => _PreviewableDataUrlImage(
+                      dataUrl: image,
+                      width: 84,
+                      height: 84,
                     ),
                   )
                   .toList(),
@@ -4214,21 +4260,110 @@ class _ImageThumb extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return _PreviewableDataUrlImage(
+      dataUrl: dataUrl,
+      width: 72,
+      height: 72,
+    );
+  }
+}
+
+class _DecodedImageCache {
+  static final Map<String, Uint8List> _cache = <String, Uint8List>{};
+
+  static Uint8List? decode(String dataUrl) {
+    if (dataUrl.isEmpty) {
+      return null;
+    }
+
+    final cached = _cache[dataUrl];
+    if (cached != null) {
+      return cached;
+    }
+
     try {
       final parts = dataUrl.split(',');
       final bytes = base64Decode(parts.length > 1 ? parts.last : dataUrl);
-      return ClipRRect(
+      _cache[dataUrl] = bytes;
+      return bytes;
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+class _PreviewableMemoryImage extends StatelessWidget {
+  const _PreviewableMemoryImage({
+    required this.bytes,
+    required this.width,
+    required this.height,
+  });
+
+  final Uint8List bytes;
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () {
+        showDialog<void>(
+          context: context,
+          builder: (dialogContext) => Dialog(
+            insetPadding: const EdgeInsets.all(20),
+            child: InteractiveViewer(
+              minScale: 0.8,
+              maxScale: 4,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: Image.memory(
+                  bytes,
+                  fit: BoxFit.contain,
+                  gaplessPlayback: true,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+      child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Image.memory(
           bytes,
-          width: 72,
-          height: 72,
+          width: width,
+          height: height,
           fit: BoxFit.cover,
+          gaplessPlayback: true,
+          filterQuality: FilterQuality.low,
         ),
-      );
-    } catch (_) {
+      ),
+    );
+  }
+}
+
+class _PreviewableDataUrlImage extends StatelessWidget {
+  const _PreviewableDataUrlImage({
+    required this.dataUrl,
+    required this.width,
+    required this.height,
+  });
+
+  final String dataUrl;
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _DecodedImageCache.decode(dataUrl);
+    if (bytes == null) {
       return const SizedBox.shrink();
     }
+
+    return _PreviewableMemoryImage(
+      bytes: bytes,
+      width: width,
+      height: height,
+    );
   }
 }
 
